@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 提示词优化助手</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="auth-page" class="auth-page">
+        <div class="auth-layout">
+            <aside class="auth-brand">
+                <div class="brand-content">
+                    <div class="brand-logo">✨</div>
+                    <h1>AI 提示词优化助手</h1>
+                    <p class="brand-tagline">输入原始提示词，AI 帮你改写成更清晰、高效的版本</p>
+                    <ul class="brand-features">
+                        <li><span>01</span> 明确角色与任务</li>
+                        <li><span>02</span> 结构化高质量提示词</li>
+                        <li><span>03</span> 历史记录与优化效果评分</li>
+                    </ul>
+                </div>
+            </aside>
+
+            <section class="auth-card-wrap">
+                <div class="auth-card">
+                    <div id="login-panel" class="auth-panel active">
+                        <div class="auth-card-header">
+                            <h2>欢迎回来</h2>
+                            <p>登录您的账号，继续优化提示词</p>
+                        </div>
+                        <form id="login-form" class="auth-form">
+                            <div class="form-group">
+                                <label for="login-username">用户名</label>
+                                <input type="text" id="login-username" placeholder="请输入用户名" autocomplete="username" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="login-password">密码</label>
+                                <input type="password" id="login-password" placeholder="请输入密码" autocomplete="current-password" required>
+                            </div>
+                            <div class="form-actions-row">
+                                <label class="remember-me">
+                                    <input type="checkbox" id="remember-me"> 记住我
+                                </label>
+                                <button type="button" class="link-btn" id="show-forgot-btn">忘记密码？</button>
+                            </div>
+                            <button type="submit" class="btn-primary">登 录</button>
+                        </form>
+                        <p class="auth-switch">
+                            还没有账号？
+                            <button type="button" class="link-btn" data-switch="register">立即注册</button>
+                        </p>
+                        <p id="login-message" class="message"></p>
+                    </div>
+
+                    <div id="register-panel" class="auth-panel">
+                        <div class="auth-card-header">
+                            <h2>创建账号</h2>
+                            <p>注册后即可使用 AI 提示词优化功能</p>
+                        </div>
+                        <form id="register-form" class="auth-form">
+                            <div class="form-group">
+                                <label for="register-username">用户名</label>
+                                <input type="text" id="register-username" placeholder="至少 3 个字符" autocomplete="username" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="register-email">邮箱</label>
+                                <input type="email" id="register-email" placeholder="用于找回密码" autocomplete="email" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="register-password">密码</label>
+                                <input type="password" id="register-password" placeholder="至少 6 位" autocomplete="new-password" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="register-confirm">确认密码</label>
+                                <input type="password" id="register-confirm" placeholder="再次输入密码" autocomplete="new-password" required>
+                            </div>
+                            <button type="submit" class="btn-primary">注 册</button>
+                        </form>
+                        <p class="auth-switch">
+                            已有账号？
+                            <button type="button" class="link-btn" data-switch="login">返回登录</button>
+                        </p>
+                        <p id="register-message" class="message"></p>
+                    </div>
+
+                    <div id="forgot-panel" class="auth-panel">
+                        <div class="auth-card-header">
+                            <h2>找回密码</h2>
+                            <p>验证用户名与注册邮箱，设置新密码</p>
+                        </div>
+                        <form id="forgot-form" class="auth-form">
+                            <div class="form-group">
+                                <label for="forgot-username">用户名</label>
+                                <input type="text" id="forgot-username" placeholder="请输入用户名" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="forgot-email">注册邮箱</label>
+                                <input type="email" id="forgot-email" placeholder="请输入注册时使用的邮箱" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="forgot-password">新密码</label>
+                                <input type="password" id="forgot-password" placeholder="至少 6 位" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="forgot-confirm">确认新密码</label>
+                                <input type="password" id="forgot-confirm" placeholder="再次输入新密码" required>
+                            </div>
+                            <button type="submit" class="btn-primary">重置密码</button>
+                        </form>
+                        <p class="auth-switch">
+                            想起密码了？
+                            <button type="button" class="link-btn" data-switch="login">返回登录</button>
+                        </p>
+                        <p id="forgot-message" class="message"></p>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <div id="app-shell" class="app-shell hidden">
+        <header class="app-header">
+            <div class="header-left">
+                <span class="header-logo">✨</span>
+                <h1>AI 提示词优化助手</h1>
+            </div>
+            <nav id="main-nav">
+                <button class="nav-btn active" data-view="polish">优化对话</button>
+                <button class="nav-btn" data-view="history">历史记录</button>
+                <button class="nav-btn nav-btn-outline" id="logout-btn">退出登录</button>
+            </nav>
+        </header>
+
+        <main class="app-main">
+            <section id="polish-view" class="view active chat-view">
+                <div class="chat-window">
+                    <div class="chat-topbar">
+                        <div class="chat-topbar-info">
+                            <h2>提示词优化对话</h2>
+                            <p>输入原始提示词，AI 输出优化版本 · 上滑查看历史</p>
+                        </div>
+                        <div class="font-size-control" title="调整对话文字大小">
+                            <span class="font-size-label">字号</span>
+                            <button type="button" class="font-size-btn" id="font-smaller" aria-label="缩小">A−</button>
+                            <select id="font-size-select" aria-label="字号大小">
+                                <option value="14">小</option>
+                                <option value="16" selected>标准</option>
+                                <option value="18">中</option>
+                                <option value="20">大</option>
+                                <option value="24">特大</option>
+                            </select>
+                            <button type="button" class="font-size-btn" id="font-larger" aria-label="放大">A+</button>
+                        </div>
+                    </div>
+                    <div id="chat-load-more" class="chat-load-more hidden">
+                        <button type="button" id="load-more-btn">加载更早的消息</button>
+                    </div>
+                    <div id="chat-messages" class="chat-messages">
+                        <div class="chat-welcome">
+                            <p>👋 欢迎使用 AI 提示词优化助手</p>
+                            <p>在下方输入你的原始提示词，点击发送即可获得优化后的版本。</p>
+                            <p class="chat-example">示例：写一篇关于气候变化的文章</p>
+                        </div>
+                    </div>
+                    <div id="chat-loading" class="chat-loading hidden">
+                        <span class="typing-dots">AI 正在优化提示词</span>
+                    </div>
+                    <div class="chat-input-bar">
+                        <div class="chat-input-wrap">
+                            <textarea
+                                id="original-text"
+                                rows="1"
+                                maxlength="2000"
+                                placeholder="输入原始提示词，例如：写一篇关于气候变化的文章"
+                            ></textarea>
+                            <span class="char-count"><span id="char-count">0</span>/2000</span>
+                        </div>
+                        <button id="paste-btn" type="button" class="chat-tool-btn" title="从剪贴板粘贴">粘贴</button>
+                        <button id="polish-btn" type="button" class="chat-send-btn" title="优化提示词">🚀 优化</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="history-view" class="view">
+                <div class="section-title">
+                    <h2>优化历史</h2>
+                    <p>查看、评分或删除您的历史提示词优化记录</p>
+                </div>
+                <div id="history-list"></div>
+                <div class="pagination">
+                    <button id="prev-page" disabled>上一页</button>
+                    <span id="page-info">第 1 页</span>
+                    <button id="next-page" disabled>下一页</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
