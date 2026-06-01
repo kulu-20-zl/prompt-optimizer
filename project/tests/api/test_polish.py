@@ -67,6 +67,30 @@ def test_polish_generic_api_error(logged_in_client, monkeypatch):
     assert "异常" in response.get_json()["error"]
 
 
+def test_polish_refine_stream_success(logged_in_client, mock_openai):
+    polished = "请分别调研情绪识别与人格分析，输出对比表格。"
+    direction = "已定 FunASR 与 PKU，只要链接和分析"
+    response = logged_in_client.post(
+        "/api/polish/stream",
+        json={
+            "refine": True,
+            "polished": polished,
+            "direction": direction,
+            "display_original": f"【继续优化】\n优化方向：{direction}",
+            "mode": "code",
+        },
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "record_id" in body
+    assert "已落实优化方向" in body
+    assert direction[:20] in body
+
+    record = PolishRecord.query.order_by(PolishRecord.id.desc()).first()
+    assert "继续优化" in record.original_text
+    assert "已落实优化方向" in record.polished_text
+
+
 def test_polish_stream_success(logged_in_client, mock_openai):
     response = logged_in_client.post(
         "/api/polish/stream",
@@ -75,7 +99,7 @@ def test_polish_stream_success(logged_in_client, mock_openai):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "data:" in body
-    assert MOCK_RESULT in body
+    assert "气候变化" in body
     assert "record_id" in body
 
 

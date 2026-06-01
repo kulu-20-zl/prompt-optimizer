@@ -63,3 +63,23 @@ def normalize_mode(mode: str | None) -> str:
 
 def get_system_prompt(mode: str | None) -> str:
     return MODE_PROMPTS[normalize_mode(mode)]
+
+
+REFINE_RULES = (
+    "【继续优化 — 额外规则】\n"
+    "用户已有一份「当前提示词」，并补充了「优化方向」。"
+    "请合并二者，输出一份新的完整提示词（仍是给 AI 的指令，不是执行结果）。\n\n"
+    "【严禁】\n"
+    "- 禁止输出思考过程、推理草稿、自我对话（如「首先我需要…」「让我分析…」「用户希望…」）\n"
+    "- 禁止用第一人称描述你正在做什么；禁止输出「分析如下」「我的思路」\n"
+    "- 禁止直接执行调研：禁止在输出中给出真实论文/仓库链接、文献列表、领域知识答案\n"
+    "- 禁止前缀：「优化结果：」「以下是…」\n\n"
+    "【若优化方向要求链接、源码、论文分析】\n"
+    "应把这些要求写进「新提示词」的约束里（例如指定 FunASR、PKU，"
+    "要求对方输出 https 完整链接并分析代码与论文），而不是你自己去检索并作答。\n\n"
+    "只输出新提示词正文，别无其他。"
+)
+
+
+def get_refine_system_prompt(mode: str | None) -> str:
+    return get_system_prompt(mode) + "\n\n" + REFINE_RULES

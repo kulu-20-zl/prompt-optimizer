@@ -4,7 +4,7 @@ from flask import Blueprint, Response, current_app, jsonify, request, session, s
 
 from backend.config import Config
 from backend.models import PolishRecord, db
-from backend.services.ai_client import polish_text, polish_text_stream
+from backend.services.ai_client import polish_text, polish_text_refine, polish_text_stream
 from backend.services.prompt_modes import MODE_LABELS, normalize_mode
 from backend.utils.auth import login_required
 
@@ -45,6 +45,23 @@ def _save_record(
     return record
 
 
+def _parse_polish_body(data: dict) -> tuple[str, str, str, bool, str | None]:
+    """Returns text, mode, storage_original, is_refine, refine_direction."""
+    mode = normalize_mode(data.get("mode"))
+    is_refine = bool(data.get("refine"))
+
+    if is_refine:
+        polished_base = (data.get("polished") or "").strip()
+        direction = (data.get("direction") or "").strip()
+        storage = (data.get("display_original") or "").strip()
+        if not storage:
+            storage = f"【继续优化】\n优化方向：{direction}"
+        return polished_base, mode, storage, True, direction
+
+    text = (data.get("text") or "").strip()
+    return text, mode, text, False, None
+
+
 def _record_payload(record: PolishRecord, original: str, polished: str) -> dict:
     return {
         "original": original,
@@ -71,23 +88,35 @@ def list_modes():
 @login_required
 def polish():
     data = request.get_json(silent=True) or {}
-    text = (data.get("text") or "").strip()
-    mode = normalize_mode(data.get("mode"))
+    text, mode, storage_original, is_refine, direction = _parse_polish_body(data)
 
-    if not text:
-        return jsonify({"error": "文本不能为空"}), 400
-    if len(text) > current_app.config["MAX_TEXT_LENGTH"]:
-        return jsonify({"error": "文本过长，最多2000字符"}), 400
+    if is_refine:
+        if not text:
+            return jsonify({"error": "当前提示词不能为空"}), 400
+        if not direction:
+            return jsonify({"error": "优化方向不能为空"}), 400
+        if len(text) > current_app.config["REFINE_POLISHED_MAX"]:
+            return jsonify({"error": "当前提示词过长"}), 400
+        if len(direction) > current_app.config["REFINE_DIRECTION_MAX"]:
+            return jsonify({"error": "优化方向过长"}), 400
+    else:
+        if not text:
+            return jsonify({"error": "文本不能为空"}), 400
+        if len(text) > current_app.config["MAX_TEXT_LENGTH"]:
+            return jsonify({"error": "文本过长，最多2000字符"}), 400
 
     try:
-        polished = polish_text(text, mode=mode)
+        if is_refine:
+            polished = polish_text_refine(text, direction, mode=mode)
+        else:
+            polished = polish_text(text, mode=mode)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         error_msg, status_code = _map_ai_error(e)
         _save_record(
             session["user_id"],
-            text,
+            storage_original,
             "",
             mode,
             status="failed",
@@ -95,40 +124,55 @@ def polish():
         )
         return jsonify({"error": error_msg}), status_code
 
-    record = _save_record(session["user_id"], text, polished, mode)
-    return jsonify(_record_payload(record, text, polished))
+    record = _save_record(session["user_id"], storage_original, polished, mode)
+    return jsonify(_record_payload(record, storage_original, polished))
 
 
 @polish_bp.post("/api/polish/stream")
 @login_required
 def polish_stream():
     data = request.get_json(silent=True) or {}
-    text = (data.get("text") or "").strip()
-    mode = normalize_mode(data.get("mode"))
+    text, mode, storage_original, is_refine, direction = _parse_polish_body(data)
 
-    if not text:
-        return jsonify({"error": "文本不能为空"}), 400
-    if len(text) > current_app.config["MAX_TEXT_LENGTH"]:
-        return jsonify({"error": "文本过长，最多2000字符"}), 400
+    if is_refine:
+        if not text:
+            return jsonify({"error": "当前提示词不能为空"}), 400
+        if not direction:
+            return jsonify({"error": "优化方向不能为空"}), 400
+        if len(text) > current_app.config["REFINE_POLISHED_MAX"]:
+            return jsonify({"error": "当前提示词过长"}), 400
+        if len(direction) > current_app.config["REFINE_DIRECTION_MAX"]:
+            return jsonify({"error": "优化方向过长"}), 400
+    else:
+        if not text:
+            return jsonify({"error": "文本不能为空"}), 400
+        if len(text) > current_app.config["MAX_TEXT_LENGTH"]:
+            return jsonify({"error": "文本过长，最多2000字符"}), 400
 
     user_id = session["user_id"]
 
     def generate():
         parts: list[str] = []
         try:
-            for chunk in polish_text_stream(text, mode=mode):
+            if is_refine:
+                stream_iter = polish_text_stream(
+                    mode=mode, polished=text, direction=direction
+                )
+            else:
+                stream_iter = polish_text_stream(text, mode=mode)
+            for chunk in stream_iter:
                 parts.append(chunk)
                 yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
             polished = "".join(parts)
-            record = _save_record(user_id, text, polished, mode)
-            yield f"data: {json.dumps(_record_payload(record, text, polished), ensure_ascii=False)}\n\n"
+            record = _save_record(user_id, storage_original, polished, mode)
+            yield f"data: {json.dumps(_record_payload(record, storage_original, polished), ensure_ascii=False)}\n\n"
         except ValueError as e:
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
         except Exception as e:
             error_msg, _ = _map_ai_error(e)
             record = _save_record(
                 user_id,
-                text,
+                storage_original,
                 "",
                 mode,
                 status="failed",

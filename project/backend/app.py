@@ -17,13 +17,15 @@ from backend.services.db_migrate import ensure_schema
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 
-def create_app(config_class=Config):
+def create_app(config_class=Config, config_overrides=None):
     app = Flask(
         __name__,
         static_folder=os.path.join(FRONTEND_DIR, "static"),
         static_url_path="/static",
     )
     app.config.from_object(config_class)
+    if config_overrides:
+        app.config.update(config_overrides)
     app.config["MOCK_AI"] = os.getenv("MOCK_AI", "0") == "1"
     app.config["MOCK_AI_DELAY"] = float(os.getenv("MOCK_AI_DELAY", "0"))
 
@@ -92,4 +94,6 @@ if __name__ == "__main__":
         print("  访问: http://127.0.0.1:5000")
         print("=" * 52)
 
-    app.run(debug=Config.DEBUG, port=5000, use_reloader=Config.DEBUG)
+    # SQLite 与 Debug 热重载同时开启时，双进程可能争用同一库文件；测试 drop_all 误伤风险见 conftest 修复
+    use_reloader = Config.DEBUG and not str(Config.SQLALCHEMY_DATABASE_URI).startswith("sqlite")
+    app.run(debug=Config.DEBUG, port=5000, use_reloader=use_reloader)

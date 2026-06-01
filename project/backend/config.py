@@ -30,6 +30,8 @@ class Config:
     MOCK_AI = os.getenv("MOCK_AI", "0") == "1"
     MOCK_AI_DELAY = float(os.getenv("MOCK_AI_DELAY", "0"))
     MAX_TEXT_LENGTH = 2000
+    REFINE_POLISHED_MAX = 3500
+    REFINE_DIRECTION_MAX = 800
     MAX_PER_PAGE = 50
     DEFAULT_PER_PAGE = 10
     DEBUG = os.getenv("FLASK_DEBUG", "1") == "1"

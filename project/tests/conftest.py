@@ -16,9 +16,8 @@ from backend.models import User, db
 
 @pytest.fixture
 def app():
-    app = create_app()
-    app.config.update(
-        {
+    app = create_app(
+        config_overrides={
             "TESTING": True,
             "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
             "SECRET_KEY": "test-secret",
@@ -57,9 +56,20 @@ def mock_openai(monkeypatch):
             raise ValueError("文本过长")
         return mock_result
 
+    def fake_polish_refine(polished, direction, mode="general"):
+        if not polished.strip():
+            raise ValueError("当前提示词不能为空")
+        if not direction.strip():
+            raise ValueError("优化方向不能为空")
+        return (
+            f"{mock_result}\n\n"
+            f"【已落实优化方向】{direction.strip()[:120]}"
+        )
+
     from backend.services import ai_client
 
     monkeypatch.setattr(ai_client, "polish_text", fake_polish)
+    monkeypatch.setattr(ai_client, "polish_text_refine", fake_polish_refine)
     return fake_polish
 
 

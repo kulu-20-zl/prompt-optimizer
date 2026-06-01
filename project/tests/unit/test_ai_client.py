@@ -95,3 +95,37 @@ class TestLooksLikeDirectAnswer:
             "输出分情绪识别与人格分析两节，每节说明研究方向与文献检索要点。"
         )
         assert ai_client.looks_like_direct_answer(sample) is False
+
+
+class TestLooksLikeReasoningTrace:
+    def test_detects_chain_of_thought(self):
+        sample = (
+            "首先，我需要理解用户的优化方向。用户已经确定 FunASR 和 PKU，"
+            "接下来我将分析如何在提示词中落实这些要求。"
+        )
+        assert ai_client.looks_like_reasoning_trace(sample) is True
+
+    def test_prompt_style_not_detected(self):
+        sample = (
+            "你是一位研究助理。请针对 FunASR（情绪识别）与 PKU 人格分析方案，"
+            "分别给出完整 https 链接，并分析代码与论文。输出须含对比表格。"
+        )
+        assert ai_client.looks_like_reasoning_trace(sample) is False
+
+
+class TestPolishTextRefineMock:
+    def test_refine_mock_returns_prompt(self, monkeypatch):
+        monkeypatch.setenv("MOCK_AI", "1")
+        result = ai_client.polish_text_refine(
+            "请调研情绪与人格两个方向。",
+            "已定 FunASR 与 PKU，要链接和分析",
+            mode="code",
+        )
+        assert "FunASR" in result
+        assert "https" in result
+        assert result.startswith("你是一位")
+
+    def test_refine_empty_direction_raises(self, monkeypatch):
+        monkeypatch.setenv("MOCK_AI", "1")
+        with pytest.raises(ValueError, match="优化方向"):
+            ai_client.polish_text_refine("已有提示词", "  ", mode="general")
