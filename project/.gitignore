@@ -6,4 +6,5 @@ __pycache__/
 htmlcov/
 .coverage
 instance/
+instance/backups/
 *.db

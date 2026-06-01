@@ -52,7 +52,7 @@ def mock_openai(monkeypatch):
         "4) 语言通俗易懂。"
     )
 
-    def fake_polish(text):
+    def fake_polish(text, mode="general"):
         if len(text) > 2000:
             raise ValueError("文本过长")
         return mock_result

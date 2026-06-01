@@ -74,3 +74,24 @@ class TestPolishTextRealApiMocked:
 
         result = ai_client.polish_text("input")
         assert result == "Polished text"
+
+
+class TestLooksLikeDirectAnswer:
+    def test_detects_research_answer(self):
+        sample = (
+            "- **情绪识别**\n"
+            "  - **研究方向**\n"
+            "  - **关键论文**\n"
+            "    - Poria et al., 2019\n"
+            "  - **开源代码**\n"
+            "    - https://github.com/huggingface/transformers\n"
+            "    - https://github.com/speechbrain/speechbrain\n"
+        )
+        assert ai_client.looks_like_direct_answer(sample) is True
+
+    def test_prompt_style_not_detected(self):
+        sample = (
+            "你是一位研究助理。请梳理情绪与人格相关研究，"
+            "输出分情绪识别与人格分析两节，每节说明研究方向与文献检索要点。"
+        )
+        assert ai_client.looks_like_direct_answer(sample) is False

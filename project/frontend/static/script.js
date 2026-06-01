@@ -4,11 +4,52 @@ let totalPages = 1;
 let chatHistoryPage = 1;
 let chatHasMore = false;
 let chatLoadingMore = false;
+let polishAbortController = null;
 
 const API_BASE = "";
 const CHAT_PER_PAGE = 20;
 const FONT_SIZE_KEY = "chatFontSize";
+const FAVORITES_KEY = "favoriteRecords";
+const MODE_KEY = "optimizeMode";
 const FONT_SIZES = [14, 16, 18, 20, 24];
+
+const MODE_LABELS = {
+    general: "通用优化",
+    writing: "写作优化",
+    code: "编程场景",
+    data: "数据分析",
+};
+
+function showToast(message, type = "info") {
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add("show"));
+    setTimeout(() => {
+        toast.classList.remove("show");
+        setTimeout(() => toast.remove(), 300);
+    }, 2600);
+}
+
+function getFavorites() {
+    try {
+        return new Set(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]"));
+    } catch {
+        return new Set();
+    }
+}
+
+function toggleFavorite(recordId) {
+    const favorites = getFavorites();
+    const key = String(recordId);
+    if (favorites.has(key)) favorites.delete(key);
+    else favorites.add(key);
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]));
+    return favorites.has(key);
+}
 
 function applyChatFontSize(px) {
     const size = Math.min(24, Math.max(12, parseInt(px, 10) || 16));
@@ -43,6 +84,16 @@ function initFontSizeControl() {
     });
 }
 
+function initModeControl() {
+    const select = document.getElementById("optimize-mode");
+    if (!select) return;
+    const saved = localStorage.getItem(MODE_KEY);
+    if (saved && MODE_LABELS[saved]) select.value = saved;
+    select.addEventListener("change", () => {
+        localStorage.setItem(MODE_KEY, select.value);
+    });
+}
+
 async function apiRequest(url, options = {}) {
     const response = await fetch(API_BASE + url, {
         credentials: "same-origin",
@@ -56,6 +107,19 @@ async function apiRequest(url, options = {}) {
     return data;
 }
 
+async function checkSession() {
+    try {
+        const data = await apiRequest("/api/me");
+        currentUser = data.user_id;
+        updateAuthUI(true);
+        return true;
+    } catch {
+        currentUser = null;
+        updateAuthUI(false);
+        return false;
+    }
+}
+
 function showMessage(el, text, type = "success") {
     el.textContent = text;
     el.className = `message ${type}`;
@@ -63,7 +127,7 @@ function showMessage(el, text, type = "success") {
 
 function escapeHtml(text) {
     const div = document.createElement("div");
-    div.textContent = text;
+    div.textContent = text ?? "";
     return div.innerHTML;
 }
 
@@ -93,6 +157,7 @@ function showAppShell() {
     document.getElementById("auth-page").classList.add("hidden");
     document.getElementById("app-shell").classList.remove("hidden");
     initFontSizeControl();
+    initModeControl();
     switchView("polish");
     initChat();
 }
@@ -103,20 +168,13 @@ function switchView(viewName) {
     document.getElementById(`${viewName}-view`).classList.add("active");
     const navBtn = document.querySelector(`.nav-btn[data-view="${viewName}"]`);
     if (navBtn) navBtn.classList.add("active");
-    if (viewName === "polish") {
-        scrollChatToBottom();
-    }
+    if (viewName === "polish") scrollChatToBottom();
 }
 
 function updateAuthUI(loggedIn) {
-    if (loggedIn) {
-        showAppShell();
-    } else {
-        showAuthPage();
-    }
+    if (loggedIn) showAppShell();
+    else showAuthPage();
 }
-
-/* ========== Chat UI ========== */
 
 function getChatContainer() {
     return document.getElementById("chat-messages");
@@ -140,14 +198,8 @@ function renderBubbleHeader(label) {
     `;
 }
 
-async function copyBubbleText(btn) {
-    const bubble = btn.closest(".bubble");
-    const textEl = bubble?.querySelector(".bubble-text");
-    if (!textEl) return;
-
-    const text = textEl.textContent.trim();
-    if (!text || text.startsWith("AI 正在优化")) return;
-
+async function copyText(text, btn) {
+    if (!text) return;
     try {
         await navigator.clipboard.writeText(text);
     } catch {
@@ -160,14 +212,26 @@ async function copyBubbleText(btn) {
         document.execCommand("copy");
         document.body.removeChild(ta);
     }
+    if (btn) {
+        const original = btn.textContent;
+        btn.textContent = "已复制";
+        btn.classList.add("copied");
+        setTimeout(() => {
+            btn.textContent = original;
+            btn.classList.remove("copied");
+        }, 1500);
+    } else {
+        showToast("已复制到剪贴板", "success");
+    }
+}
 
-    const original = btn.textContent;
-    btn.textContent = "已复制";
-    btn.classList.add("copied");
-    setTimeout(() => {
-        btn.textContent = original;
-        btn.classList.remove("copied");
-    }, 1500);
+async function copyBubbleText(btn) {
+    const bubble = btn.closest(".bubble");
+    const textEl = bubble?.querySelector(".bubble-text");
+    if (!textEl) return;
+    const text = getBubblePlainText(textEl);
+    if (!text || text.startsWith("AI 正在优化")) return;
+    await copyText(text, btn);
 }
 
 function bindCopyButtons(root) {
@@ -177,6 +241,7 @@ function bindCopyButtons(root) {
 }
 
 function renderRatingStars(recordId, currentRating) {
+    if (!recordId) return "";
     let html = '<span class="label">优化效果评分</span><div class="rating-stars">';
     for (let i = 1; i <= 5; i++) {
         const active = currentRating && i <= currentRating ? " active" : "";
@@ -186,35 +251,113 @@ function renderRatingStars(recordId, currentRating) {
     return html;
 }
 
+function renderModeBadge(mode) {
+    const label = MODE_LABELS[mode] || mode || "通用优化";
+    return `<span class="mode-badge">${escapeHtml(label)}</span>`;
+}
+
+function renderAiExtras(item) {
+    if (item.status === "failed") return "";
+    const favorited = item.id && getFavorites().has(String(item.id));
+    return `
+        <div class="bubble-actions">
+            <button type="button" class="bubble-action-btn reuse-btn">继续优化</button>
+            <button type="button" class="bubble-action-btn compare-btn">对比</button>
+            <button type="button" class="bubble-action-btn favorite-btn${favorited ? " active" : ""}">${favorited ? "已收藏" : "收藏"}</button>
+        </div>
+        <div class="compare-panel hidden">
+            <div class="compare-col">
+                <div class="compare-title">原始</div>
+                <div class="compare-body">${escapeHtml(item.original)}</div>
+            </div>
+            <div class="compare-col">
+                <div class="compare-title">优化后</div>
+                <div class="compare-body">${escapeHtml(item.polished)}</div>
+            </div>
+        </div>
+    `;
+}
+
+function bindAiExtras(block, item) {
+    const reuseBtn = block.querySelector(".reuse-btn");
+    reuseBtn?.addEventListener("click", () => {
+        originalText.value = item.polished || "";
+        document.getElementById("char-count").textContent = originalText.value.length;
+        originalText.style.height = "auto";
+        originalText.style.height = Math.min(originalText.scrollHeight, 120) + "px";
+        originalText.focus();
+        showToast("已填入优化结果，可继续迭代", "success");
+    });
+
+    block.querySelector(".compare-btn")?.addEventListener("click", () => {
+        const panel = block.querySelector(".compare-panel");
+        panel?.classList.toggle("hidden");
+        if (panel && !panel.classList.contains("hidden")) {
+            const polishedCol = panel.querySelector(".compare-col:last-child .compare-body");
+            if (polishedCol && item.polished && !polishedCol.dataset.mdDone) {
+                applyMarkdownToElement(polishedCol, item.polished);
+                polishedCol.classList.add("md-content");
+                polishedCol.dataset.mdDone = "1";
+            }
+        }
+    });
+
+    block.querySelector(".favorite-btn")?.addEventListener("click", (e) => {
+        if (!item.id) return;
+        const active = toggleFavorite(item.id);
+        e.target.textContent = active ? "已收藏" : "收藏";
+        e.target.classList.toggle("active", active);
+        showToast(active ? "已收藏" : "已取消收藏", "success");
+    });
+}
+
+function renderAiBubble(item) {
+    if (item.status === "failed") {
+        return `
+            <div class="bubble bubble-error">
+                ${renderModeBadge(item.mode)}
+                <div class="bubble-label">优化失败</div>
+                <div class="bubble-text">${escapeHtml(item.error_message || item.polished || "未知错误")}</div>
+            </div>
+        `;
+    }
+    return `
+        <div class="bubble">
+            ${renderBubbleHeader("优化后提示词")}
+            ${renderModeBadge(item.mode)}
+            <div class="bubble-text bubble-text-md"></div>
+            <div class="bubble-rating" data-record-id="${item.id}">
+                ${renderRatingStars(item.id, item.rating)}
+            </div>
+            ${renderAiExtras(item)}
+        </div>
+    `;
+}
+
+function hydrateAiMarkdown(block, item) {
+    const el = block.querySelector(".msg-row.ai .bubble-text-md");
+    if (el && item.polished) {
+        applyMarkdownToElement(el, item.polished);
+        el.classList.remove("bubble-text-md");
+    }
+}
+
 function appendExchange(item, prepend = false) {
     const container = getChatContainer();
-    const welcome = container.querySelector(".chat-welcome");
-    if (welcome) welcome.remove();
-
-    const timeHtml = item.created_at
-        ? `<div class="chat-time">${formatChatTime(item.created_at)}</div>`
-        : "";
+    container.querySelector(".chat-welcome")?.remove();
 
     const block = document.createElement("div");
     block.className = "chat-exchange";
     block.dataset.id = item.id || "";
     block.innerHTML = `
-        ${timeHtml}
+        ${item.created_at ? `<div class="chat-time">${formatChatTime(item.created_at)}</div>` : ""}
         <div class="msg-row user">
             <div class="bubble">
                 ${renderBubbleHeader("原始提示词")}
                 <div class="bubble-text">${escapeHtml(item.original)}</div>
             </div>
         </div>
-        <div class="msg-row ai">
-            <div class="bubble">
-                ${renderBubbleHeader("优化后提示词")}
-                <div class="bubble-text">${escapeHtml(item.polished)}</div>
-                <div class="bubble-rating" data-record-id="${item.id}">
-                    ${renderRatingStars(item.id, item.rating)}
-                </div>
-            </div>
-        </div>
+        <div class="msg-row ai">${renderAiBubble(item)}</div>
     `;
 
     if (prepend) {
@@ -226,27 +369,31 @@ function appendExchange(item, prepend = false) {
 
     bindRatingStars(block);
     bindCopyButtons(block);
+    bindAiExtras(block, item);
+    hydrateAiMarkdown(block, item);
 }
 
-function appendPendingExchange(original) {
+function appendPendingExchange(original, mode) {
     const container = getChatContainer();
-    const welcome = container.querySelector(".chat-welcome");
-    if (welcome) welcome.remove();
+    container.querySelector(".chat-welcome")?.remove();
 
     const block = document.createElement("div");
     block.className = "chat-exchange pending";
+    block.dataset.original = original;
+    block.dataset.mode = mode;
     block.innerHTML = `
         <div class="chat-time">${formatChatTime(new Date().toISOString())}</div>
         <div class="msg-row user">
             <div class="bubble">
                 ${renderBubbleHeader("原始提示词")}
+                ${renderModeBadge(mode)}
                 <div class="bubble-text">${escapeHtml(original)}</div>
             </div>
         </div>
         <div class="msg-row ai">
             <div class="bubble bubble-pending">
                 <div class="bubble-label">优化后提示词</div>
-                <div class="bubble-text"><span class="typing-dots">AI 正在优化提示词</span></div>
+                <div class="bubble-text streaming"><span class="typing-dots">AI 正在优化提示词</span></div>
             </div>
         </div>
     `;
@@ -256,21 +403,15 @@ function appendPendingExchange(original) {
     return block;
 }
 
-function completePendingExchange(block, item) {
+function finalizeExchange(block, item) {
     block.classList.remove("pending");
     block.dataset.id = item.id || "";
     const aiRow = block.querySelector(".msg-row.ai");
-    aiRow.innerHTML = `
-        <div class="bubble">
-            ${renderBubbleHeader("优化后提示词")}
-            <div class="bubble-text">${escapeHtml(item.polished)}</div>
-            <div class="bubble-rating" data-record-id="${item.id}">
-                ${renderRatingStars(item.id, item.rating)}
-            </div>
-        </div>
-    `;
+    aiRow.innerHTML = renderAiBubble(item);
     bindRatingStars(block);
     bindCopyButtons(block);
+    bindAiExtras(block, item);
+    hydrateAiMarkdown(block, item);
 }
 
 function failPendingExchange(block, message) {
@@ -306,8 +447,9 @@ function bindRatingStars(root) {
                     ratingEl.appendChild(hint);
                 }
                 hint.textContent = `已评分，您的平均分：${data.new_avg_rating}`;
+                showToast("评分成功", "success");
             } catch (err) {
-                alert(err.message);
+                showToast(err.message, "error");
             }
         });
     });
@@ -318,17 +460,13 @@ async function loadChatHistory(page = 1, prepend = false) {
     chatLoadingMore = true;
 
     try {
-        const data = await apiRequest(
-            `/api/history?page=${page}&per_page=${CHAT_PER_PAGE}`
-        );
+        const data = await apiRequest(`/api/history?page=${page}&per_page=${CHAT_PER_PAGE}`);
         chatHistoryPage = data.page;
         totalPages = data.pages;
         chatHasMore = data.page < data.pages;
 
         const items = [...data.items].reverse();
-        if (items.length === 0 && page === 1) {
-            return;
-        }
+        if (items.length === 0 && page === 1) return;
 
         const container = getChatContainer();
         const scrollHeightBefore = container.scrollHeight;
@@ -341,6 +479,9 @@ async function loadChatHistory(page = 1, prepend = false) {
                     polished: item.polished,
                     rating: item.rating,
                     created_at: item.created_at,
+                    mode: item.mode,
+                    status: item.status,
+                    error_message: item.error_message,
                 },
                 prepend
             );
@@ -348,15 +489,11 @@ async function loadChatHistory(page = 1, prepend = false) {
 
         document.getElementById("chat-load-more").classList.toggle("hidden", !chatHasMore);
 
-        if (prepend) {
-            container.scrollTop = container.scrollHeight - scrollHeightBefore;
-        } else {
-            scrollChatToBottom();
-        }
+        if (prepend) container.scrollTop = container.scrollHeight - scrollHeightBefore;
+        else scrollChatToBottom();
     } catch (err) {
         if (page === 1) {
-            getChatContainer().innerHTML +=
-                `<p class="message error">${escapeHtml(err.message)}</p>`;
+            getChatContainer().innerHTML += `<p class="message error">${escapeHtml(err.message)}</p>`;
         }
     } finally {
         chatLoadingMore = false;
@@ -364,11 +501,10 @@ async function loadChatHistory(page = 1, prepend = false) {
 }
 
 function initChat() {
-    const container = getChatContainer();
-    container.innerHTML = `
+    getChatContainer().innerHTML = `
         <div class="chat-welcome">
             <p>👋 欢迎使用 AI 提示词优化助手</p>
-            <p>在下方输入你的原始提示词，点击发送即可获得优化后的版本。</p>
+            <p>选择优化模式，输入原始提示词，AI 将流式输出优化结果。</p>
             <p class="chat-example">示例：写一篇关于气候变化的文章</p>
         </div>
     `;
@@ -377,19 +513,118 @@ function initChat() {
     loadChatHistory(1, false);
 }
 
-document.getElementById("load-more-btn")?.addEventListener("click", () => {
-    if (chatHasMore) {
-        loadChatHistory(chatHistoryPage + 1, true);
+async function streamPolish(text, mode, pendingBlock, signal) {
+    const aiTextEl = pendingBlock.querySelector(".msg-row.ai .bubble-text");
+    const aiBubble = pendingBlock.querySelector(".msg-row.ai .bubble");
+    aiBubble.classList.remove("bubble-pending");
+    aiTextEl.classList.add("streaming");
+    aiTextEl.textContent = "";
+
+    const response = await fetch("/api/polish/stream", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, mode }),
+        signal,
+    });
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "请求失败");
     }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let polished = "";
+    let finalPayload = null;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data:")) continue;
+            const payload = JSON.parse(line.slice(5).trim());
+            if (payload.error) throw new Error(payload.error);
+            if (payload.chunk) {
+                polished += payload.chunk;
+                aiTextEl.textContent = polished;
+                scrollChatToBottom();
+            }
+            if (payload.record_id !== undefined) {
+                finalPayload = payload;
+            }
+        }
+    }
+
+    if (!finalPayload) {
+        throw new Error("未收到完整响应");
+    }
+
+    finalizeExchange(pendingBlock, {
+        id: finalPayload.record_id,
+        original: text,
+        polished: finalPayload.polished || polished,
+        rating: null,
+        mode: finalPayload.mode || mode,
+        status: finalPayload.status || "success",
+        error_message: finalPayload.error_message,
+    });
+}
+
+const originalText = document.getElementById("original-text");
+const polishBtn = document.getElementById("polish-btn");
+const cancelBtn = document.getElementById("cancel-polish-btn");
+
+async function sendPolish() {
+    const text = originalText.value.trim();
+    const mode = document.getElementById("optimize-mode")?.value || "general";
+
+    if (!text) {
+        showToast("请输入原始提示词", "error");
+        return;
+    }
+
+    polishBtn.disabled = true;
+    cancelBtn?.classList.remove("hidden");
+    polishAbortController = new AbortController();
+
+    originalText.value = "";
+    originalText.style.height = "auto";
+    document.getElementById("char-count").textContent = "0";
+
+    const pendingBlock = appendPendingExchange(text, mode);
+
+    try {
+        await streamPolish(text, mode, pendingBlock, polishAbortController.signal);
+        scrollChatToBottom();
+    } catch (err) {
+        if (err.name === "AbortError") {
+            pendingBlock.remove();
+            showToast("已取消优化", "info");
+        } else {
+            failPendingExchange(pendingBlock, err.message);
+            scrollChatToBottom();
+            showToast(err.message, "error");
+        }
+    } finally {
+        polishBtn.disabled = false;
+        cancelBtn?.classList.add("hidden");
+        polishAbortController = null;
+    }
+}
+
+document.getElementById("load-more-btn")?.addEventListener("click", () => {
+    if (chatHasMore) loadChatHistory(chatHistoryPage + 1, true);
 });
 
 document.querySelectorAll(".nav-btn[data-view]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-        switchView(btn.dataset.view);
-        if (btn.dataset.view === "polish") {
-            scrollChatToBottom();
-        }
-    });
+    btn.addEventListener("click", () => switchView(btn.dataset.view));
 });
 
 document.querySelectorAll("[data-switch]").forEach((btn) => {
@@ -398,9 +633,7 @@ document.querySelectorAll("[data-switch]").forEach((btn) => {
 
 document.getElementById("show-forgot-btn").addEventListener("click", () => {
     const username = document.getElementById("login-username").value.trim();
-    if (username) {
-        document.getElementById("forgot-username").value = username;
-    }
+    if (username) document.getElementById("forgot-username").value = username;
     switchAuthPanel("forgot");
 });
 
@@ -428,12 +661,10 @@ document.getElementById("register-form").addEventListener("submit", async (e) =>
     const msgEl = document.getElementById("register-message");
     const password = document.getElementById("register-password").value;
     const confirm = document.getElementById("register-confirm").value;
-
     if (password !== confirm) {
         showMessage(msgEl, "两次输入的密码不一致", "error");
         return;
     }
-
     try {
         await apiRequest("/api/register", {
             method: "POST",
@@ -460,12 +691,10 @@ document.getElementById("forgot-form").addEventListener("submit", async (e) => {
     const msgEl = document.getElementById("forgot-message");
     const newPassword = document.getElementById("forgot-password").value;
     const confirm = document.getElementById("forgot-confirm").value;
-
     if (newPassword !== confirm) {
         showMessage(msgEl, "两次输入的密码不一致", "error");
         return;
     }
-
     try {
         const data = await apiRequest("/api/forgot-password", {
             method: "POST",
@@ -489,10 +718,6 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
     updateAuthUI(false);
 });
 
-const originalText = document.getElementById("original-text");
-const polishBtn = document.getElementById("polish-btn");
-const chatLoading = document.getElementById("chat-loading");
-
 originalText.addEventListener("input", () => {
     document.getElementById("char-count").textContent = originalText.value.length;
     originalText.style.height = "auto";
@@ -506,60 +731,15 @@ originalText.addEventListener("keydown", (e) => {
     }
 });
 
-document.getElementById("paste-btn").addEventListener("click", async () => {
-    try {
-        const text = await navigator.clipboard.readText();
-        if (!text) return;
-        originalText.value = text.slice(0, 2000);
-        document.getElementById("char-count").textContent = originalText.value.length;
-        originalText.style.height = "auto";
-        originalText.style.height = Math.min(originalText.scrollHeight, 120) + "px";
-        originalText.focus();
-    } catch {
-        alert("无法读取剪贴板，请使用 Ctrl+V 粘贴");
-    }
+cancelBtn?.addEventListener("click", () => {
+    polishAbortController?.abort();
 });
-
-async function sendPolish() {
-    const text = originalText.value.trim();
-    if (!text) {
-        alert("请输入原始提示词");
-        return;
-    }
-
-    polishBtn.disabled = true;
-    originalText.value = "";
-    originalText.style.height = "auto";
-    document.getElementById("char-count").textContent = "0";
-
-    const pendingBlock = appendPendingExchange(text);
-
-    try {
-        const data = await apiRequest("/api/polish", {
-            method: "POST",
-            body: JSON.stringify({ text }),
-        });
-
-        completePendingExchange(pendingBlock, {
-            id: data.record_id,
-            polished: data.polished,
-            rating: null,
-        });
-        scrollChatToBottom();
-    } catch (err) {
-        failPendingExchange(pendingBlock, err.message);
-        scrollChatToBottom();
-    } finally {
-        polishBtn.disabled = false;
-    }
-}
 
 polishBtn.addEventListener("click", sendPolish);
 
-/* ========== History management tab ========== */
-
 async function loadHistory(page = 1) {
     const listEl = document.getElementById("history-list");
+    const favorites = getFavorites();
     try {
         const data = await apiRequest(`/api/history?page=${page}&per_page=10`);
         currentPage = data.page;
@@ -575,48 +755,67 @@ async function loadHistory(page = 1) {
         }
 
         listEl.innerHTML = data.items
-            .map(
-                (item) => `
-            <div class="history-item" data-id="${item.id}">
-                <div class="meta">${item.created_at || ""}</div>
+            .map((item) => {
+                const failed = item.status === "failed";
+                const star = favorites.has(String(item.id)) ? " ★" : "";
+                return `
+            <div class="history-item${failed ? " history-failed" : ""}" data-id="${item.id}">
+                <div class="meta">${item.created_at || ""} · ${escapeHtml(item.mode_label || "")}${star}</div>
                 <div class="original">原始提示词：${escapeHtml(item.original)}</div>
-                <div class="polished">优化后：${escapeHtml(item.polished)}</div>
-                <div class="rating-display">${item.rating ? "★".repeat(item.rating) + " (" + item.rating + "星)" : "未评分"}</div>
+                <div class="history-polished-wrap">
+                    <div class="polished-label">${failed ? "失败原因" : "优化后"}</div>
+                    <div class="history-polished-md"></div>
+                </div>
+                <div class="rating-display">${item.rating ? "★".repeat(item.rating) + " (" + item.rating + "星)" : failed ? "优化失败" : "未评分"}</div>
                 <div class="history-actions">
                     <button type="button" class="history-copy-btn" data-target="original">复制原始</button>
-                    <button type="button" class="history-copy-btn" data-target="polished">复制优化</button>
+                    ${failed ? "" : '<button type="button" class="history-copy-btn" data-target="polished">复制优化</button>'}
+                    ${failed ? "" : '<button type="button" class="history-reuse-btn">继续优化</button>'}
                     <button class="delete-btn" data-id="${item.id}">删除</button>
                 </div>
-            </div>`
-            )
+            </div>`;
+            })
             .join("");
+
+        data.items.forEach((item, index) => {
+            const row = listEl.children[index];
+            const body = row?.querySelector(".history-polished-md");
+            if (!body) return;
+            const text = item.status === "failed" ? item.error_message : item.polished;
+            if (item.status === "failed") {
+                body.textContent = text || "";
+            } else if (text) {
+                applyMarkdownToElement(body, text);
+            }
+        });
 
         listEl.querySelectorAll(".history-copy-btn").forEach((btn) => {
             btn.addEventListener("click", async () => {
                 const itemEl = btn.closest(".history-item");
                 const target = btn.dataset.target;
-                const el = itemEl.querySelector(target === "polished" ? ".polished" : ".original");
-                if (!el) return;
-                let text = el.textContent.trim();
-                if (target === "original") text = text.replace(/^原始提示词：/, "").trim();
-                if (target === "polished") text = text.replace(/^优化后：/, "").trim();
-                try {
-                    await navigator.clipboard.writeText(text);
-                } catch {
-                    const ta = document.createElement("textarea");
-                    ta.value = text;
-                    ta.style.position = "fixed";
-                    ta.style.left = "-9999px";
-                    document.body.appendChild(ta);
-                    ta.select();
-                    document.execCommand("copy");
-                    document.body.removeChild(ta);
+                if (target === "polished") {
+                    const el = itemEl.querySelector(".history-polished-md");
+                    const text = getBubblePlainText(el);
+                    if (text) await copyText(text);
+                    return;
                 }
-                const original = btn.textContent;
-                btn.textContent = "已复制";
-                setTimeout(() => {
-                    btn.textContent = original;
-                }, 1500);
+                const el = itemEl.querySelector(".original");
+                if (!el) return;
+                let text = el.textContent.trim().replace(/^原始提示词：/, "").trim();
+                await copyText(text);
+            });
+        });
+
+        listEl.querySelectorAll(".history-reuse-btn").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const itemEl = btn.closest(".history-item");
+                const el = itemEl.querySelector(".history-polished-md");
+                let text = getBubblePlainText(el);
+                switchView("polish");
+                originalText.value = text.slice(0, 2000);
+                document.getElementById("char-count").textContent = originalText.value.length;
+                originalText.focus();
+                showToast("已填入输入框", "success");
             });
         });
 
@@ -627,8 +826,9 @@ async function loadHistory(page = 1) {
                     await apiRequest(`/api/record/${btn.dataset.id}`, { method: "DELETE" });
                     loadHistory(currentPage);
                     initChat();
+                    showToast("已删除", "success");
                 } catch (err) {
-                    alert(err.message);
+                    showToast(err.message, "error");
                 }
             });
         });
@@ -648,3 +848,5 @@ document.getElementById("prev-page").addEventListener("click", () => {
 document.getElementById("next-page").addEventListener("click", () => {
     if (currentPage < totalPages) loadHistory(currentPage + 1);
 });
+
+checkSession();

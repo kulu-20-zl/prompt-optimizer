@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 提示词优化助手</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.9/purify.min.js"></script>
+    <script src="/static/markdown.js"></script>
 </head>
 <body>
     <div id="auth-page" class="auth-page">
@@ -167,6 +170,15 @@
                         <span class="typing-dots">AI 正在优化提示词</span>
                     </div>
                     <div class="chat-input-bar">
+                        <div class="chat-mode-wrap">
+                            <label for="optimize-mode">优化模式</label>
+                            <select id="optimize-mode" aria-label="优化模式">
+                                <option value="general">通用优化</option>
+                                <option value="writing">写作优化</option>
+                                <option value="code">编程场景</option>
+                                <option value="data">数据分析</option>
+                            </select>
+                        </div>
                         <div class="chat-input-wrap">
                             <textarea
                                 id="original-text"
@@ -176,8 +188,10 @@
                             ></textarea>
                             <span class="char-count"><span id="char-count">0</span>/2000</span>
                         </div>
-                        <button id="paste-btn" type="button" class="chat-tool-btn" title="从剪贴板粘贴">粘贴</button>
-                        <button id="polish-btn" type="button" class="chat-send-btn" title="优化提示词">🚀 优化</button>
+                        <div class="chat-action-col">
+                            <button id="cancel-polish-btn" type="button" class="chat-tool-btn chat-cancel-btn hidden" title="取消优化">取消</button>
+                            <button id="polish-btn" type="button" class="chat-send-btn" title="优化提示词">优化</button>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -196,6 +210,8 @@
             </section>
         </main>
     </div>
+
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
     <script src="/static/script.js"></script>
 </body>

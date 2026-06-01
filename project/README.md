@@ -2,122 +2,103 @@
 
 基于 Flask + SQLite + DeepSeek（OpenAI 兼容 API）的 Web 应用，将用户输入的原始提示词优化为更清晰、结构化的高质量提示词。包含单元测试、接口测试、性能测试（Locust）与 Selenium 自动化测试。
 
+## 主要特性
+
+- **多模式优化**：通用 / 写作 / 代码 / 数据分析
+- **流式输出**：SSE 逐字显示优化结果
+- **微信式对话**：即时显示用户消息、对比视图、继续优化、收藏
+- **失败也记录**：AI 异常时写入 `failed` 状态，便于排查
+- **自动备份**：启动时备份 SQLite 到 `instance/backups/`
+- **登录限流**：防止暴力尝试密码
+- **Session 持久化**：刷新页面自动恢复登录态（`/api/me`）
+
 ## 项目结构
 
 ```text
 project/
 ├── backend/
-│   ├── app.py              # Flask 主应用与 API 路由
-│   ├── config.py           # 配置（环境变量）
-│   ├── models.py           # User、PolishRecord 模型
-│   └── services/
-│       ├── ai_client.py    # AI 提示词优化调用与 Mock
-│       ├── pagination.py   # 历史分页
-│       └── rating.py       # 评分校验与均值
+│   ├── app.py              # Flask 入口
+│   ├── config.py           # 配置
+│   ├── models.py           # User、PolishRecord
+│   ├── routes/             # Blueprint 路由
+│   │   ├── auth.py
+│   │   ├── polish.py
+│   │   └── history.py
+│   ├── services/
+│   │   ├── ai_client.py    # AI 调用 + 流式
+│   │   ├── prompt_modes.py   # 优化模式
+│   │   ├── backup.py         # 数据库备份
+│   │   └── ...
+│   └── utils/
 ├── frontend/
-│   ├── index.html
-│   └── static/
-│       ├── style.css
-│       └── script.js
 ├── tests/
-│   ├── conftest.py
-│   ├── unit/
-│   ├── api/
-│   ├── auto/
-│   └── performance/
-├── requirements.txt
-└── README.md
+└── requirements.txt
 ```
 
-## 环境要求
-
-- Python 3.9+
-- Chrome 浏览器（Selenium 测试需要）
-
-## 安装
+## 安装与启动
 
 ```bash
 cd project
 python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# macOS / Linux
-source venv/bin/activate
-
+venv\Scripts\activate        # Windows
 pip install -r requirements.txt
-```
-
-## 配置
-
-| 环境变量 | 说明 | 默认值 |
-|----------|------|--------|
-| `DEEPSEEK_API_KEY` | DeepSeek 代理 API Key | 空 |
-| `DEEPSEEK_BASE_URL` | 代理地址 | 空 |
-| `DEEPSEEK_MODEL` | 模型名 | `deepseek-v4-pro` |
-| `MOCK_AI` | 设为 `1` 时使用 Mock，不调用真实 AI | `0` |
-| `MOCK_AI_DELAY` | Mock 模式下模拟延迟（秒） | `0` |
-| `DATABASE_URI` | 数据库连接（一般不用改） | `project/instance/grammar_assistant.db` |
-
-**开发/测试建议**：始终设置 `MOCK_AI=1`，避免消耗 API 额度。
-
-```bash
-# Windows PowerShell
-$env:MOCK_AI="1"
-```
-
-## 启动开发服务器
-
-```bash
-cd project
-$env:MOCK_AI="1"   # PowerShell 测试用
+copy .env.example .env         # 填入 DEEPSEEK_API_KEY
 python backend/app.py
 ```
 
-浏览器访问：<http://127.0.0.1:5000>
+访问：<http://127.0.0.1:5000>
 
-启动时终端会显示**数据库文件路径**和已有用户数、优化记录数。
+## 配置
 
-**数据存储说明**：
-- 用户账号保存在 `project/instance/grammar_assistant.db` 的 `user` 表
-- 提示词优化记录保存在 `polish_record` 表（仅优化**成功**后写入）
+| 环境变量 | 说明 | 默认 |
+|----------|------|------|
+| `DEEPSEEK_API_KEY` | API Key | 空 |
+| `DEEPSEEK_BASE_URL` | 代理地址 | 空 |
+| `DEEPSEEK_MODEL` | 模型名 | `deepseek-v4-pro` |
+| `MOCK_AI` | `1` 时使用 Mock | `0` |
+| `SECRET_KEY` | Session 密钥 | 开发默认值 |
+| `FLASK_DEBUG` | `1` 开 debug | `1` |
+| `LOGIN_RATE_LIMIT` | 登录限流次数 | `5` |
+| `ENABLE_DB_BACKUP` | 启动时备份 | `1` |
 
-使用真实 AI 时，在 `.env` 中配置 `DEEPSEEK_API_KEY` 并设置 `MOCK_AI=0`。
+## 数据存储
 
-## 运行测试
+文件：`project/instance/grammar_assistant.db`
+
+| 表 | 说明 |
+|----|------|
+| `user` | 用户账号 |
+| `polish_record` | 优化记录（含 `status`、`mode`、`error_message`） |
+
+备份目录：`project/instance/backups/`
+
+**Navicat 提示**：连接上述 `.db` 文件后按 F5 刷新；最底部 NULL 行是新增空行，不是数据。
+
+## API
+
+| 路径 | 方法 | 说明 |
+|------|------|------|
+| `/api/me` | GET | 当前登录状态 |
+| `/api/modes` | GET | 优化模式列表 |
+| `/api/polish` | POST | 同步优化 |
+| `/api/polish/stream` | POST | 流式优化（SSE） |
+| `/api/register` | POST | 注册 |
+| `/api/login` | POST | 登录 |
+| `/api/history` | GET | 分页历史 |
+
+## 测试
 
 ```bash
 $env:MOCK_AI="1"
 pytest tests/unit tests/api -v
 pytest tests/unit tests/api --cov=backend --cov-report=html
-pytest tests/auto/test_selenium_flow.py -v
 ```
 
-## API 一览
+CI：推送至 `main` 分支时 GitHub Actions 自动跑测试（见 `.github/workflows/test.yml`）。
 
-| 路径 | 方法 | 说明 |
-|------|------|------|
-| `/api/register` | POST | 注册 |
-| `/api/login` | POST | 登录 |
-| `/api/logout` | POST | 登出 |
-| `/api/polish` | POST | 提示词优化（路由名保留，功能为优化提示词） |
-| `/api/history` | GET | 分页历史 |
-| `/api/record/<id>` | DELETE | 删除记录 |
-| `/api/record/<id>/rate` | POST | 对优化效果评分 1-5 |
+## 生产部署建议
 
-## 功能说明
-
-1. **注册/登录**：Session 认证，支持忘记密码
-2. **提示词优化**：输入原始提示词，AI 输出优化后的结构化提示词
-3. **优化对话**：微信风格对话界面，可上滑查看历史
-4. **历史记录**：分页查看、删除
-5. **评分反馈**：对优化效果打 1-5 星
-
-## 使用示例
-
-| 原始提示词 | 优化方向 |
-|-----------|----------|
-| 写一篇关于气候变化的文章 | 明确角色、字数、结构、风格 |
-| 给我一些营销点子 | 补充行业、目标用户、输出格式 |
-| 帮我写 Python 爬虫 | 明确目标网站、数据字段、技术约束 |
+- 设置 `FLASK_DEBUG=0`
+- 修改 `SECRET_KEY` 为随机长字符串
+- 使用 gunicorn 等 WSGI 服务器
+- 忘记密码功能应增加邮箱验证码（当前为实训简化版）

@@ -32,6 +32,11 @@ class Config:
     MAX_TEXT_LENGTH = 2000
     MAX_PER_PAGE = 50
     DEFAULT_PER_PAGE = 10
+    DEBUG = os.getenv("FLASK_DEBUG", "1") == "1"
+    LOGIN_RATE_LIMIT = int(os.getenv("LOGIN_RATE_LIMIT", "5"))
+    LOGIN_RATE_WINDOW = int(os.getenv("LOGIN_RATE_WINDOW", "60"))
+    ENABLE_DB_BACKUP = os.getenv("ENABLE_DB_BACKUP", "1") == "1"
+    DB_BACKUP_KEEP = int(os.getenv("DB_BACKUP_KEEP", "5"))
 
     # 供启动日志使用
     DB_FILE = DB_FILE

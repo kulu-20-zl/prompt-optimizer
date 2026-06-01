@@ -160,3 +160,27 @@ def test_logout(client, logged_in_client):
 
     polish_resp = logged_in_client.post("/api/polish", json={"text": "test"})
     assert polish_resp.status_code == 401
+
+
+def test_me_logged_in(logged_in_client, logged_in_user):
+    response = logged_in_client.get("/api/me")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["logged_in"] is True
+    assert data["user_id"] == logged_in_user.id
+    assert data["username"] == "testuser"
+
+
+def test_me_not_logged_in(client):
+    response = client.get("/api/me")
+    assert response.status_code == 401
+
+
+def test_login_rate_limit(client, app):
+    app.config["LOGIN_RATE_LIMIT"] = 2
+    app.config["LOGIN_RATE_WINDOW"] = 60
+    for _ in range(2):
+        client.post("/api/login", json={"username": "nouser", "password": "wrong"})
+    response = client.post("/api/login", json={"username": "nouser", "password": "wrong"})
+    assert response.status_code == 429
+
