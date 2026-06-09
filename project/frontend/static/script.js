@@ -35,20 +35,131 @@ function showToast(message, type = "info") {
 }
 
 function getFavorites() {
+    return new Set(getFavoriteList().map((f) => String(f.id)));
+}
+
+function getFavoriteList() {
     try {
-        return new Set(JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]"));
+        const raw = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]");
+        if (!Array.isArray(raw)) return [];
+        if (raw.length && typeof raw[0] === "string") {
+            return raw.map((id) => ({ id: String(id), legacy: true }));
+        }
+        return raw;
     } catch {
-        return new Set();
+        return [];
     }
 }
 
-function toggleFavorite(recordId) {
-    const favorites = getFavorites();
-    const key = String(recordId);
-    if (favorites.has(key)) favorites.delete(key);
-    else favorites.add(key);
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites]));
-    return favorites.has(key);
+function saveFavoriteList(list) {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(list));
+}
+
+function toggleFavoriteItem(item) {
+    if (!item?.id) return false;
+    const list = getFavoriteList();
+    const key = String(item.id);
+    const idx = list.findIndex((f) => String(f.id) === key);
+    if (idx >= 0) {
+        list.splice(idx, 1);
+        saveFavoriteList(list);
+        return false;
+    }
+    list.unshift({
+        id: key,
+        original: item.original || "",
+        polished: item.polished || "",
+        mode: item.mode || "general",
+        mode_label: MODE_LABELS[item.mode] || item.mode || "通用优化",
+        created_at: item.created_at || new Date().toISOString(),
+        rating: item.rating ?? null,
+    });
+    saveFavoriteList(list);
+    return true;
+}
+
+let refineContext = null;
+
+function openRefineModal(item) {
+    if (!item?.polished) {
+        showToast("没有可继续优化的内容", "error");
+        return;
+    }
+    refineContext = {
+        polished: item.polished,
+        mode: item.mode || document.getElementById("optimize-mode")?.value || "general",
+        parentOriginal: item.original || "",
+    };
+    const modal = document.getElementById("refine-modal");
+    const preview = document.getElementById("refine-preview");
+    const directionEl = document.getElementById("refine-direction");
+    if (preview) renderBubbleContent(preview, item.polished);
+    if (directionEl) {
+        directionEl.value = "";
+        document.getElementById("refine-direction-count").textContent = "0";
+    }
+    modal?.classList.remove("hidden");
+    directionEl?.focus();
+}
+
+function closeRefineModal() {
+    document.getElementById("refine-modal")?.classList.add("hidden");
+    refineContext = null;
+}
+
+async function submitRefineFromModal() {
+    if (!refineContext) return;
+    const direction = document.getElementById("refine-direction")?.value.trim();
+    if (!direction) {
+        showToast("请填写优化方向", "error");
+        return;
+    }
+    const { polished, mode } = refineContext;
+    if (polished.length > 3500) {
+        showToast("当前提示词过长，请换一条较短记录", "error");
+        return;
+    }
+    if (direction.length > 800) {
+        showToast("优化方向过长，请精简后重试", "error");
+        return;
+    }
+
+    closeRefineModal();
+    switchView("polish");
+
+    const displayOriginal = `【继续优化】\n优化方向：${direction}`;
+
+    polishBtn.disabled = true;
+    cancelBtn?.classList.remove("hidden");
+    polishAbortController = new AbortController();
+
+    originalText.value = "";
+    document.getElementById("char-count").textContent = "0";
+
+    const pendingBlock = appendPendingExchange(displayOriginal, mode);
+
+    try {
+        await streamPolish(null, mode, pendingBlock, polishAbortController.signal, {
+            refine: true,
+            polished,
+            direction,
+            displayOriginal,
+        });
+        scrollChatToBottom();
+        showToast("已根据优化方向重新生成", "success");
+    } catch (err) {
+        if (err.name === "AbortError") {
+            pendingBlock.remove();
+            showToast("已取消", "info");
+        } else {
+            failPendingExchange(pendingBlock, err.message);
+            showToast(err.message, "error");
+        }
+    } finally {
+        polishBtn.disabled = false;
+        cancelBtn?.classList.add("hidden");
+        polishAbortController = null;
+    }
 }
 
 function applyChatFontSize(px) {
@@ -268,32 +379,31 @@ function renderAiExtras(item) {
         <div class="compare-panel hidden">
             <div class="compare-col">
                 <div class="compare-title">原始</div>
-                <div class="compare-body">${escapeHtml(item.original)}</div>
+                <div class="compare-body compare-body-original"></div>
             </div>
             <div class="compare-col">
                 <div class="compare-title">优化后</div>
-                <div class="compare-body">${escapeHtml(item.polished)}</div>
+                <div class="compare-body compare-body-polished"></div>
             </div>
         </div>
     `;
 }
 
 function bindAiExtras(block, item) {
-    const reuseBtn = block.querySelector(".reuse-btn");
-    reuseBtn?.addEventListener("click", () => {
-        originalText.value = item.polished || "";
-        document.getElementById("char-count").textContent = originalText.value.length;
-        originalText.style.height = "auto";
-        originalText.style.height = Math.min(originalText.scrollHeight, 120) + "px";
-        originalText.focus();
-        showToast("已填入优化结果，可继续迭代", "success");
+    block.querySelector(".reuse-btn")?.addEventListener("click", () => {
+        openRefineModal(item);
     });
 
     block.querySelector(".compare-btn")?.addEventListener("click", () => {
         const panel = block.querySelector(".compare-panel");
         panel?.classList.toggle("hidden");
         if (panel && !panel.classList.contains("hidden")) {
+            const originalCol = panel.querySelector(".compare-col:first-child .compare-body");
             const polishedCol = panel.querySelector(".compare-col:last-child .compare-body");
+            if (originalCol && item.original && !originalCol.dataset.mdDone) {
+                renderBubbleContent(originalCol, item.original);
+                originalCol.dataset.mdDone = "1";
+            }
             if (polishedCol && item.polished && !polishedCol.dataset.mdDone) {
                 applyMarkdownToElement(polishedCol, item.polished);
                 polishedCol.classList.add("md-content");
@@ -304,10 +414,13 @@ function bindAiExtras(block, item) {
 
     block.querySelector(".favorite-btn")?.addEventListener("click", (e) => {
         if (!item.id) return;
-        const active = toggleFavorite(item.id);
+        const active = toggleFavoriteItem(item);
         e.target.textContent = active ? "已收藏" : "收藏";
         e.target.classList.toggle("active", active);
-        showToast(active ? "已收藏" : "已取消收藏", "success");
+        showToast(active ? "已收藏，可在「我的收藏」查看" : "已取消收藏", "success");
+        if (document.getElementById("favorites-view")?.classList.contains("active")) {
+            loadFavorites();
+        }
     });
 }
 
@@ -342,6 +455,14 @@ function hydrateAiMarkdown(block, item) {
     }
 }
 
+function hydrateUserMarkdown(block, text) {
+    const el = block.querySelector(".msg-row.user .bubble-text-user");
+    if (el && text) {
+        renderBubbleContent(el, text);
+        el.classList.remove("bubble-text-user");
+    }
+}
+
 function appendExchange(item, prepend = false) {
     const container = getChatContainer();
     container.querySelector(".chat-welcome")?.remove();
@@ -354,7 +475,7 @@ function appendExchange(item, prepend = false) {
         <div class="msg-row user">
             <div class="bubble">
                 ${renderBubbleHeader("原始提示词")}
-                <div class="bubble-text">${escapeHtml(item.original)}</div>
+                <div class="bubble-text bubble-text-user"></div>
             </div>
         </div>
         <div class="msg-row ai">${renderAiBubble(item)}</div>
@@ -370,6 +491,7 @@ function appendExchange(item, prepend = false) {
     bindRatingStars(block);
     bindCopyButtons(block);
     bindAiExtras(block, item);
+    hydrateUserMarkdown(block, item.original);
     hydrateAiMarkdown(block, item);
 }
 
@@ -387,7 +509,7 @@ function appendPendingExchange(original, mode) {
             <div class="bubble">
                 ${renderBubbleHeader("原始提示词")}
                 ${renderModeBadge(mode)}
-                <div class="bubble-text">${escapeHtml(original)}</div>
+                <div class="bubble-text bubble-text-user"></div>
             </div>
         </div>
         <div class="msg-row ai">
@@ -399,6 +521,7 @@ function appendPendingExchange(original, mode) {
     `;
     container.appendChild(block);
     bindCopyButtons(block);
+    hydrateUserMarkdown(block, original);
     scrollChatToBottom();
     return block;
 }
@@ -513,18 +636,32 @@ function initChat() {
     loadChatHistory(1, false);
 }
 
-async function streamPolish(text, mode, pendingBlock, signal) {
+async function streamPolish(text, mode, pendingBlock, signal, options = {}) {
     const aiTextEl = pendingBlock.querySelector(".msg-row.ai .bubble-text");
     const aiBubble = pendingBlock.querySelector(".msg-row.ai .bubble");
     aiBubble.classList.remove("bubble-pending");
     aiTextEl.classList.add("streaming");
     aiTextEl.textContent = "";
 
+    const body = options.refine
+        ? {
+              refine: true,
+              polished: options.polished,
+              direction: options.direction,
+              display_original: options.displayOriginal,
+              mode,
+          }
+        : { text, mode };
+
+    const originalForRecord = options.refine
+        ? options.displayOriginal || `【继续优化】\n优化方向：${options.direction}`
+        : text;
+
     const response = await fetch("/api/polish/stream", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, mode }),
+        body: JSON.stringify(body),
         signal,
     });
 
@@ -568,7 +705,7 @@ async function streamPolish(text, mode, pendingBlock, signal) {
 
     finalizeExchange(pendingBlock, {
         id: finalPayload.record_id,
-        original: text,
+        original: originalForRecord,
         polished: finalPayload.polished || polished,
         rating: null,
         mode: finalPayload.mode || mode,
@@ -761,7 +898,10 @@ async function loadHistory(page = 1) {
                 return `
             <div class="history-item${failed ? " history-failed" : ""}" data-id="${item.id}">
                 <div class="meta">${item.created_at || ""} · ${escapeHtml(item.mode_label || "")}${star}</div>
-                <div class="original">原始提示词：${escapeHtml(item.original)}</div>
+                <div class="original">
+                    <div class="polished-label">原始提示词</div>
+                    <div class="history-original-md"></div>
+                </div>
                 <div class="history-polished-wrap">
                     <div class="polished-label">${failed ? "失败原因" : "优化后"}</div>
                     <div class="history-polished-md"></div>
@@ -780,6 +920,10 @@ async function loadHistory(page = 1) {
         data.items.forEach((item, index) => {
             const row = listEl.children[index];
             const body = row?.querySelector(".history-polished-md");
+            const origBody = row?.querySelector(".history-original-md");
+            if (origBody && item.original) {
+                renderBubbleContent(origBody, item.original);
+            }
             if (!body) return;
             const text = item.status === "failed" ? item.error_message : item.polished;
             if (item.status === "failed") {
@@ -801,7 +945,9 @@ async function loadHistory(page = 1) {
                 }
                 const el = itemEl.querySelector(".original");
                 if (!el) return;
-                let text = el.textContent.trim().replace(/^原始提示词：/, "").trim();
+                const mdEl = el.querySelector(".history-original-md");
+                let text = mdEl ? getBubblePlainText(mdEl) : el.textContent.trim();
+                if (!text) text = el.textContent.replace(/^原始提示词\s*/, "").trim();
                 await copyText(text);
             });
         });
@@ -809,13 +955,18 @@ async function loadHistory(page = 1) {
         listEl.querySelectorAll(".history-reuse-btn").forEach((btn) => {
             btn.addEventListener("click", () => {
                 const itemEl = btn.closest(".history-item");
-                const el = itemEl.querySelector(".history-polished-md");
-                let text = getBubblePlainText(el);
-                switchView("polish");
-                originalText.value = text.slice(0, 2000);
-                document.getElementById("char-count").textContent = originalText.value.length;
-                originalText.focus();
-                showToast("已填入输入框", "success");
+                const id = itemEl?.dataset.id;
+                const mdEl = itemEl.querySelector(".history-polished-md");
+                const origMd = itemEl.querySelector(".history-original-md");
+                const record = data.items.find((i) => String(i.id) === String(id));
+                if (!record) return;
+                openRefineModal({
+                    id: record.id,
+                    original: origMd ? getBubblePlainText(origMd) : record.original,
+                    polished: getBubblePlainText(mdEl) || record.polished,
+                    mode: record.mode,
+                    created_at: record.created_at,
+                });
             });
         });
 
@@ -837,9 +988,107 @@ async function loadHistory(page = 1) {
     }
 }
 
+function loadFavorites() {
+    const listEl = document.getElementById("favorites-list");
+    if (!listEl) return;
+
+    const items = getFavoriteList();
+    if (items.length === 0) {
+        listEl.innerHTML =
+            '<p class="favorites-empty">暂无收藏。在优化对话中点击某条结果的「收藏」即可保存到这里。</p>';
+        return;
+    }
+
+    listEl.innerHTML = items
+        .map((item) => {
+            if (item.legacy) {
+                return `
+            <div class="favorite-item favorite-legacy" data-id="${escapeHtml(item.id)}">
+                <p>收藏 #${escapeHtml(item.id)}（旧版收藏，缺少内容）</p>
+                <p class="favorites-legacy-hint">请取消后重新收藏该条记录，或从历史记录中再次收藏。</p>
+                <button type="button" class="favorite-unfav-btn" data-id="${escapeHtml(item.id)}">取消收藏</button>
+            </div>`;
+            }
+            return `
+            <div class="favorite-item" data-id="${escapeHtml(item.id)}">
+                <div class="meta">${formatChatTime(item.created_at)} · ${escapeHtml(item.mode_label || "")}</div>
+                <div class="favorite-block">
+                    <div class="favorite-label">原始提示词</div>
+                    <div class="favorite-original-md"></div>
+                </div>
+                <div class="favorite-block">
+                    <div class="favorite-label">优化后提示词</div>
+                    <div class="favorite-polished-md"></div>
+                </div>
+                <div class="favorite-actions">
+                    <button type="button" class="history-copy-btn" data-copy="original">复制原始</button>
+                    <button type="button" class="history-copy-btn" data-copy="polished">复制优化</button>
+                    <button type="button" class="favorite-refine-btn">继续优化</button>
+                    <button type="button" class="favorite-unfav-btn" data-id="${escapeHtml(item.id)}">取消收藏</button>
+                </div>
+            </div>`;
+        })
+        .join("");
+
+    items.forEach((item, index) => {
+        const row = listEl.children[index];
+        if (item.legacy || !row) return;
+        const origEl = row.querySelector(".favorite-original-md");
+        const polEl = row.querySelector(".favorite-polished-md");
+        if (origEl && item.original) renderBubbleContent(origEl, item.original);
+        if (polEl && item.polished) applyMarkdownToElement(polEl, item.polished);
+    });
+
+    listEl.querySelectorAll(".history-copy-btn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+            const row = btn.closest(".favorite-item");
+            const target = btn.dataset.copy;
+            const el =
+                target === "polished"
+                    ? row.querySelector(".favorite-polished-md")
+                    : row.querySelector(".favorite-original-md");
+            const text = getBubblePlainText(el);
+            if (text) await copyText(text);
+        });
+    });
+
+    listEl.querySelectorAll(".favorite-refine-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const row = btn.closest(".favorite-item");
+            const id = row?.dataset.id;
+            const item = getFavoriteList().find((f) => String(f.id) === String(id));
+            if (item && !item.legacy) openRefineModal(item);
+        });
+    });
+
+    listEl.querySelectorAll(".favorite-unfav-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const id = btn.dataset.id;
+            const list = getFavoriteList().filter((f) => String(f.id) !== String(id));
+            saveFavoriteList(list);
+            loadFavorites();
+            showToast("已取消收藏", "info");
+        });
+    });
+}
+
 document.querySelector('.nav-btn[data-view="history"]').addEventListener("click", () => {
     loadHistory(1);
 });
+
+document.querySelector('.nav-btn[data-view="favorites"]')?.addEventListener("click", () => {
+    loadFavorites();
+});
+
+document.getElementById("refine-direction")?.addEventListener("input", (e) => {
+    document.getElementById("refine-direction-count").textContent = e.target.value.length;
+});
+
+document.querySelectorAll("[data-close-refine]").forEach((el) => {
+    el.addEventListener("click", closeRefineModal);
+});
+
+document.getElementById("refine-submit-btn")?.addEventListener("click", submitRefineFromModal);
 
 document.getElementById("prev-page").addEventListener("click", () => {
     if (currentPage > 1) loadHistory(currentPage - 1);

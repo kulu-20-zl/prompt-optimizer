@@ -115,3 +115,23 @@ function getBubblePlainText(el) {
     if (!el) return "";
     return (el.dataset.rawText || el.textContent || "").trim();
 }
+
+/** 是否像 Markdown（含 **、列表、标题、代码块等） */
+function looksLikeMarkdown(text) {
+    if (!text || !text.trim()) return false;
+    return /(\*\*|__|`[^`]+`|```|^#{1,6}\s|^\s*[-*+]\s+\S|^\s*\d+\.\s+\S|\[[^\]]+\]\([^)]+\))/m.test(
+        text
+    );
+}
+
+/** 聊天气泡：纯文本或 Markdown 展示 */
+function renderBubbleContent(el, text) {
+    if (!el) return;
+    if (looksLikeMarkdown(text)) {
+        applyMarkdownToElement(el, text);
+    } else {
+        el.classList.remove("md-content");
+        delete el.dataset.rawText;
+        el.textContent = text;
+    }
+}

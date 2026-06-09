@@ -46,6 +46,10 @@ def create_app(config_class=Config, config_overrides=None):
         if "user" not in inspector.get_table_names():
             ensure_schema()
 
+    @app.get("/health")
+    def health():
+        return jsonify({"status": "ok"})
+
     @app.route("/")
     def index():
         return send_from_directory(FRONTEND_DIR, "index.html")

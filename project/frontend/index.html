@@ -131,6 +131,7 @@
             <nav id="main-nav">
                 <button class="nav-btn active" data-view="polish">优化对话</button>
                 <button class="nav-btn" data-view="history">历史记录</button>
+                <button class="nav-btn" data-view="favorites">我的收藏</button>
                 <button class="nav-btn nav-btn-outline" id="logout-btn">退出登录</button>
             </nav>
         </header>
@@ -184,7 +185,7 @@
                                 id="original-text"
                                 rows="1"
                                 maxlength="2000"
-                                placeholder="输入原始提示词，例如：写一篇关于气候变化的文章"
+                                placeholder="输入原始提示词，支持 Markdown（**加粗**、列表等）"
                             ></textarea>
                             <span class="char-count"><span id="char-count">0</span>/2000</span>
                         </div>
@@ -208,7 +209,44 @@
                     <button id="next-page" disabled>下一页</button>
                 </div>
             </section>
+
+            <section id="favorites-view" class="view">
+                <div class="section-title">
+                    <h2>我的收藏</h2>
+                    <p>收藏的优质提示词，可随时复制或在此基础上继续优化</p>
+                </div>
+                <div id="favorites-list"></div>
+            </section>
         </main>
+    </div>
+
+    <div id="refine-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="refine-modal-title">
+        <div class="modal-backdrop" data-close-refine></div>
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="refine-modal-title">继续优化</h3>
+                <button type="button" class="modal-close" data-close-refine aria-label="关闭">×</button>
+            </div>
+            <p class="modal-hint">在下方填写<strong>优化方向</strong>。系统将生成一份<strong>新的完整提示词</strong>（合并当前结果与你的方向），供你复制到对话型 AI 中执行；<strong>不会</strong>在此直接给出论文链接或调研答案，也<strong>不会</strong>输出思考过程。</p>
+            <div class="modal-section">
+                <div class="modal-label">当前优化结果</div>
+                <div id="refine-preview" class="modal-preview md-content"></div>
+            </div>
+            <div class="modal-section">
+                <label class="modal-label" for="refine-direction">优化方向 <span class="required">*</span></label>
+                <textarea
+                    id="refine-direction"
+                    rows="3"
+                    maxlength="500"
+                    placeholder="例如：更简短一些；增加英文术语；突出代码示例；改为面向初学者的语气…"
+                ></textarea>
+                <div class="modal-char"><span id="refine-direction-count">0</span>/500</div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-secondary" data-close-refine>取消</button>
+                <button type="button" id="refine-submit-btn" class="btn-primary">重新生成</button>
+            </div>
+        </div>
     </div>
 
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
