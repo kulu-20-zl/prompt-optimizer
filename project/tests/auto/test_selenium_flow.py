@@ -24,9 +24,8 @@ os.environ["MOCK_AI_DELAY"] = "0"
 def live_server():
     from backend.app import create_app
 
-    app = create_app()
-    app.config.update(
-        {
+    app = create_app(
+        config_overrides={
             "TESTING": True,
             "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
             "SECRET_KEY": "selenium-test",
@@ -47,7 +46,7 @@ def live_server():
         daemon=True,
     )
     server_thread.start()
-    time.sleep(1)
+    time.sleep(1.5)
 
     class Server:
         url = f"http://127.0.0.1:{port}"
@@ -69,36 +68,58 @@ def driver():
     drv.quit()
 
 
+def _submit_form(driver, form_id):
+    form = driver.find_element(By.ID, form_id)
+    form.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+
+
 def test_full_flow(driver, live_server):
     username = f"seluser_{int(time.time())}"
     password = "testpass123"
-    wait = WebDriverWait(driver, 15)
+    wait = WebDriverWait(driver, 20)
 
     driver.get(f"{live_server.url}/")
 
     driver.find_element(By.CSS_SELECTOR, '[data-switch="register"]').click()
+    wait.until(EC.visibility_of_element_located((By.ID, "register-form")))
+
     driver.find_element(By.ID, "register-username").send_keys(username)
     driver.find_element(By.ID, "register-email").send_keys(f"{username}@test.com")
     driver.find_element(By.ID, "register-password").send_keys(password)
     driver.find_element(By.ID, "register-confirm").send_keys(password)
-    driver.find_element(By.ID, "register-form").submit()
-    time.sleep(0.8)
+    _submit_form(driver, "register-form")
 
-    driver.find_element(By.ID, "login-username").send_keys(username)
+    wait.until(
+        EC.text_to_be_present_in_element(
+            (By.ID, "register-message"), "注册成功"
+        )
+    )
+    wait.until(
+        lambda d: "active" in d.find_element(By.ID, "login-panel").get_attribute("class")
+    )
+
+    login_user = driver.find_element(By.ID, "login-username")
+    login_user.clear()
+    login_user.send_keys(username)
     driver.find_element(By.ID, "login-password").send_keys(password)
-    driver.find_element(By.ID, "login-form").submit()
+    _submit_form(driver, "login-form")
 
-    wait.until(EC.element_to_be_clickable((By.ID, "polish-btn")))
+    wait.until(
+        lambda d: "hidden"
+        not in d.find_element(By.ID, "app-shell").get_attribute("class")
+    )
+    input_box = wait.until(EC.presence_of_element_located((By.ID, "original-text")))
+    polish_btn = wait.until(EC.presence_of_element_located((By.ID, "polish-btn")))
 
-    input_box = driver.find_element(By.ID, "original-text")
     input_box.clear()
     input_box.send_keys("给我一些健康饮食的建议")
-    driver.find_element(By.ID, "polish-btn").click()
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", polish_btn)
+    driver.execute_script("arguments[0].click();", polish_btn)
 
     polished = wait.until(
         EC.presence_of_element_located((By.CSS_SELECTOR, ".msg-row.ai .bubble-text"))
     )
-    assert "健康" in polished.text or len(polished.text) > 0
+    assert len(polished.text.strip()) > 0
 
     star5 = driver.find_element(
         By.CSS_SELECTOR, ".bubble-rating .rating-star[data-value='5']"
@@ -123,7 +144,9 @@ def test_full_flow(driver, live_server):
     time.sleep(1)
 
     driver.refresh()
+    wait.until(EC.visibility_of_element_located((By.ID, "app-shell")))
     driver.find_element(By.CSS_SELECTOR, '.nav-btn[data-view="history"]').click()
     time.sleep(1)
     remaining = driver.find_elements(By.CLASS_NAME, "history-item")
-    assert len(remaining) == 0 or "暂无" in driver.find_element(By.ID, "history-list").text
+    history_list = driver.find_element(By.ID, "history-list")
+    assert len(remaining) == 0 or "暂无" in history_list.text

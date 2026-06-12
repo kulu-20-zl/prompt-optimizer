@@ -1,0 +1,10 @@
+# Generated submission artifacts
+submission-package/
+*.zip
+
+# Temp / placeholder files
+template_raw.txt
+template_structure.txt
+~$*.docx
+学号_姓名_*
+成员1-成员2-成员3-*
