@@ -74,6 +74,39 @@ class TestPolishTextRealApiMocked:
 
         result = ai_client.polish_text("input")
         assert result == "Polished text"
+        create_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert create_kwargs.get("stream") is not True
+        assert create_kwargs["max_tokens"] == 1200
+
+
+class TestPolishTextStream:
+    def test_stream_yields_incremental_chunks(self, monkeypatch):
+        monkeypatch.delenv("MOCK_AI", raising=False)
+
+        class FakeDelta:
+            def __init__(self, content):
+                self.content = content
+
+        class FakeChoice:
+            def __init__(self, content):
+                self.delta = FakeDelta(content)
+
+        class FakeChunk:
+            def __init__(self, content):
+                self.choices = [FakeChoice(content)]
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = [
+            FakeChunk("你"),
+            FakeChunk("是"),
+            FakeChunk("一位"),
+        ]
+        monkeypatch.setattr(ai_client, "_client", mock_client)
+
+        chunks = list(ai_client.polish_text_stream("写小说", mode="writing"))
+        assert chunks == ["你", "是", "一位"]
+        create_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert create_kwargs["stream"] is True
 
 
 class TestLooksLikeDirectAnswer:

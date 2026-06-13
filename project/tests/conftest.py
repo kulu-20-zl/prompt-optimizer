@@ -66,10 +66,19 @@ def mock_openai(monkeypatch):
             f"【已落实优化方向】{direction.strip()[:120]}"
         )
 
+    def fake_polish_stream(text="", mode="general", *, polished=None, direction=None):
+        if polished is not None and direction is not None:
+            full = fake_polish_refine(polished, direction, mode)
+        else:
+            full = fake_polish(text, mode)
+        for i in range(0, len(full), 16):
+            yield full[i : i + 16]
+
     from backend.services import ai_client
 
     monkeypatch.setattr(ai_client, "polish_text", fake_polish)
     monkeypatch.setattr(ai_client, "polish_text_refine", fake_polish_refine)
+    monkeypatch.setattr(ai_client, "polish_text_stream", fake_polish_stream)
     return fake_polish
 
 

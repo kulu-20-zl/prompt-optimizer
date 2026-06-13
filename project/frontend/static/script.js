@@ -271,6 +271,7 @@ function showAppShell() {
     initModeControl();
     switchView("polish");
     initChat();
+    syncMobileViewport();
 }
 
 function switchView(viewName) {
@@ -297,6 +298,23 @@ function scrollChatToBottom() {
         requestAnimationFrame(() => {
             el.scrollTop = el.scrollHeight;
         });
+    }
+}
+
+function syncMobileViewport() {
+    const vv = window.visualViewport;
+    const height = vv ? vv.height : window.innerHeight;
+    document.documentElement.style.setProperty("--app-vh", `${height * 0.01}px`);
+
+    const shell = document.getElementById("app-shell");
+    const inputBar = document.querySelector(".chat-input-bar");
+    if (!shell || shell.classList.contains("hidden") || !inputBar) return;
+
+    if (vv) {
+        const keyboardGap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        inputBar.style.transform = keyboardGap > 0 ? `translateY(-${keyboardGap}px)` : "";
+    } else {
+        inputBar.style.transform = "";
     }
 }
 
@@ -470,6 +488,7 @@ function appendExchange(item, prepend = false) {
     const block = document.createElement("div");
     block.className = "chat-exchange";
     block.dataset.id = item.id || "";
+    if (item.mode) block.dataset.mode = item.mode;
     block.innerHTML = `
         ${item.created_at ? `<div class="chat-time">${formatChatTime(item.created_at)}</div>` : ""}
         <div class="msg-row user">
@@ -493,9 +512,55 @@ function appendExchange(item, prepend = false) {
     bindAiExtras(block, item);
     hydrateUserMarkdown(block, item.original);
     hydrateAiMarkdown(block, item);
+    if (!prepend) syncContinueToggle();
 }
 
-function appendPendingExchange(original, mode) {
+function getLastChatPolish() {
+    const exchanges = [...document.querySelectorAll(".chat-exchange:not(.pending)")];
+    for (let i = exchanges.length - 1; i >= 0; i--) {
+        const block = exchanges[i];
+        if (block.querySelector(".bubble-error")) continue;
+        const aiTextEl = block.querySelector(".msg-row.ai .bubble-text");
+        if (!aiTextEl) continue;
+        const polished = getBubblePlainText(aiTextEl);
+        if (!polished || polished.startsWith("AI 正在优化") || polished.length < 20) continue;
+
+        let mode = block.dataset.mode || null;
+        if (!mode) {
+            const badge = block.querySelector(".mode-badge");
+            const label = badge?.textContent?.trim();
+            if (label) {
+                mode = Object.entries(MODE_LABELS).find(([, lbl]) => lbl === label)?.[0];
+            }
+        }
+        return {
+            polished,
+            mode: mode || document.getElementById("optimize-mode")?.value || "general",
+            id: block.dataset.id || null,
+        };
+    }
+    return null;
+}
+
+function syncContinueToggle() {
+    const wrap = document.getElementById("continue-wrap");
+    const checkbox = document.getElementById("continue-from-last");
+    if (!wrap || !checkbox) return;
+    const last = getLastChatPolish();
+    if (last) {
+        wrap.classList.remove("hidden");
+        checkbox.disabled = false;
+        if (!wrap.dataset.userTouched) {
+            checkbox.checked = true;
+        }
+    } else {
+        wrap.classList.add("hidden");
+        checkbox.checked = false;
+        delete wrap.dataset.userTouched;
+    }
+}
+
+function appendPendingExchange(original, mode, userLabel = "原始提示词") {
     const container = getChatContainer();
     container.querySelector(".chat-welcome")?.remove();
 
@@ -507,7 +572,7 @@ function appendPendingExchange(original, mode) {
         <div class="chat-time">${formatChatTime(new Date().toISOString())}</div>
         <div class="msg-row user">
             <div class="bubble">
-                ${renderBubbleHeader("原始提示词")}
+                ${renderBubbleHeader(userLabel)}
                 ${renderModeBadge(mode)}
                 <div class="bubble-text bubble-text-user"></div>
             </div>
@@ -529,12 +594,14 @@ function appendPendingExchange(original, mode) {
 function finalizeExchange(block, item) {
     block.classList.remove("pending");
     block.dataset.id = item.id || "";
+    if (item.mode) block.dataset.mode = item.mode;
     const aiRow = block.querySelector(".msg-row.ai");
     aiRow.innerHTML = renderAiBubble(item);
     bindRatingStars(block);
     bindCopyButtons(block);
     bindAiExtras(block, item);
     hydrateAiMarkdown(block, item);
+    syncContinueToggle();
 }
 
 function failPendingExchange(block, message) {
@@ -620,6 +687,7 @@ async function loadChatHistory(page = 1, prepend = false) {
         }
     } finally {
         chatLoadingMore = false;
+        if (page === 1) syncContinueToggle();
     }
 }
 
@@ -634,6 +702,7 @@ function initChat() {
     chatHistoryPage = 1;
     chatHasMore = false;
     loadChatHistory(1, false);
+    syncContinueToggle();
 }
 
 async function streamPolish(text, mode, pendingBlock, signal, options = {}) {
@@ -727,6 +796,10 @@ async function sendPolish() {
         return;
     }
 
+    const continueFromLast = document.getElementById("continue-from-last")?.checked;
+    const lastPolish = continueFromLast ? getLastChatPolish() : null;
+    const useRefine = Boolean(lastPolish?.polished);
+
     polishBtn.disabled = true;
     cancelBtn?.classList.remove("hidden");
     polishAbortController = new AbortController();
@@ -735,10 +808,25 @@ async function sendPolish() {
     originalText.style.height = "auto";
     document.getElementById("char-count").textContent = "0";
 
-    const pendingBlock = appendPendingExchange(text, mode);
+    const displayOriginal = useRefine ? `【追问】\n${text}` : text;
+    const activeMode = useRefine ? lastPolish.mode : mode;
+    const pendingBlock = appendPendingExchange(
+        displayOriginal,
+        activeMode,
+        useRefine ? "追问" : "原始提示词"
+    );
 
     try {
-        await streamPolish(text, mode, pendingBlock, polishAbortController.signal);
+        if (useRefine) {
+            await streamPolish(null, activeMode, pendingBlock, polishAbortController.signal, {
+                refine: true,
+                polished: lastPolish.polished,
+                direction: text,
+                displayOriginal,
+            });
+        } else {
+            await streamPolish(text, mode, pendingBlock, polishAbortController.signal);
+        }
         scrollChatToBottom();
     } catch (err) {
         if (err.name === "AbortError") {
@@ -1080,6 +1168,12 @@ document.querySelector('.nav-btn[data-view="favorites"]')?.addEventListener("cli
     loadFavorites();
 });
 
+document.getElementById("continue-from-last")?.addEventListener("change", (e) => {
+    const wrap = document.getElementById("continue-wrap");
+    if (wrap && e.target.checked) wrap.dataset.userTouched = "1";
+    if (wrap && !e.target.checked) wrap.dataset.userTouched = "1";
+});
+
 document.getElementById("refine-direction")?.addEventListener("input", (e) => {
     document.getElementById("refine-direction-count").textContent = e.target.value.length;
 });
@@ -1096,6 +1190,15 @@ document.getElementById("prev-page").addEventListener("click", () => {
 
 document.getElementById("next-page").addEventListener("click", () => {
     if (currentPage < totalPages) loadHistory(currentPage + 1);
+});
+
+syncMobileViewport();
+window.addEventListener("resize", syncMobileViewport);
+window.visualViewport?.addEventListener("resize", syncMobileViewport);
+window.visualViewport?.addEventListener("scroll", syncMobileViewport);
+
+originalText?.addEventListener("focus", () => {
+    setTimeout(scrollChatToBottom, 300);
 });
 
 checkSession();

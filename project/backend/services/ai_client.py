@@ -57,6 +57,13 @@ def _get_model() -> str:
     )
 
 
+def _get_max_tokens() -> int:
+    try:
+        return max(256, int(os.getenv("AI_MAX_TOKENS", "1200")))
+    except ValueError:
+        return 1200
+
+
 def _get_client():
     global _client
     if _client is None:
@@ -177,11 +184,40 @@ def looks_like_direct_answer(text: str) -> bool:
 
 def _build_refine_user_message(polished: str, direction: str) -> str:
     return (
-        "请将「当前提示词」与「优化方向」合并为一份新的完整提示词。\n"
+        "请在「当前提示词」基础上，按「优化方向」做增量修改并输出合并后的完整提示词。\n"
+        "「优化方向」可能是补充约束，也可能是用户在多轮使用后的新问题；"
+        "无论哪种，都须保留当前提示词已有的角色/身份与主题，不要从头重写，不要擅自换角色。\n"
         "只输出新提示词正文，不要思考过程，不要执行任务。\n\n"
         f"【当前提示词】\n{polished.strip()}\n\n"
         f"【优化方向】\n{direction.strip()}"
     )
+
+
+def _build_chat_messages(
+    text: str,
+    mode: str,
+    *,
+    retry: bool = False,
+    refine: bool = False,
+) -> tuple[list[dict[str, str]], str, float]:
+    if refine:
+        system = get_refine_system_prompt(mode)
+        if retry:
+            system += _REFINE_RETRY_SUFFIX
+        user_content = text
+        timeout = 45.0
+    else:
+        system = get_system_prompt(mode)
+        if retry:
+            system += _RETRY_SYSTEM_SUFFIX
+        user_content = _wrap_user_prompt(text)
+        timeout = 30.0
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_content},
+    ]
+    return messages, user_content, timeout
 
 
 def _call_chat(
@@ -191,29 +227,48 @@ def _call_chat(
     retry: bool = False,
     refine: bool = False,
 ) -> str:
-    if refine:
-        system = get_refine_system_prompt(mode)
-        if retry:
-            system += _REFINE_RETRY_SUFFIX
-        user_content = text
-    else:
-        system = get_system_prompt(mode)
-        if retry:
-            system += _RETRY_SYSTEM_SUFFIX
-        user_content = _wrap_user_prompt(text)
+    messages, _, timeout = _build_chat_messages(
+        text, mode, retry=retry, refine=refine
+    )
 
     client = _get_client()
     response = client.chat.completions.create(
         model=_get_model(),
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
+        messages=messages,
         temperature=0.1,
-        timeout=45.0 if refine else 30.0,
+        max_tokens=_get_max_tokens(),
+        timeout=timeout,
     )
     content = response.choices[0].message.content
     return content.strip() if content else ""
+
+
+def _iter_chat_stream(
+    text: str,
+    mode: str,
+    *,
+    retry: bool = False,
+    refine: bool = False,
+) -> Iterator[str]:
+    messages, _, timeout = _build_chat_messages(
+        text, mode, retry=retry, refine=refine
+    )
+
+    client = _get_client()
+    stream = client.chat.completions.create(
+        model=_get_model(),
+        messages=messages,
+        temperature=0.1,
+        max_tokens=_get_max_tokens(),
+        timeout=timeout,
+        stream=True,
+    )
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
 
 
 def polish_text_refine(polished: str, direction: str, mode: str = "general") -> str:
@@ -283,6 +338,33 @@ def polish_text(text: str, mode: str = "general") -> str:
         raise Exception(f"API_ERROR: {str(e)}")
 
 
+def _yield_mock_stream(result: str) -> Iterator[str]:
+    delay = float(os.getenv("MOCK_AI_DELAY", "0"))
+    chunk_size = 16
+    for i in range(0, len(result), chunk_size):
+        if delay > 0:
+            time.sleep(min(delay, 0.05))
+        yield result[i : i + chunk_size]
+
+
+def _stream_and_validate(
+    stream_iter: Iterator[str],
+    *,
+    error_message: str,
+) -> Iterator[str]:
+    parts: list[str] = []
+    try:
+        for piece in stream_iter:
+            parts.append(piece)
+            yield piece
+    except APITimeoutError:
+        raise Exception("API_TIMEOUT") from None
+
+    result = "".join(parts).strip()
+    if looks_like_bad_output(result):
+        raise ValueError(error_message)
+
+
 def polish_text_stream(
     text: str = "",
     mode: str = "general",
@@ -290,29 +372,40 @@ def polish_text_stream(
     polished: str | None = None,
     direction: str | None = None,
 ) -> Iterator[str]:
-    """Stream display; uses validated polish_text under the hood."""
+    """Stream tokens from the model as they arrive (real SSE chunks)."""
     mode = normalize_mode(mode)
-    if polished is not None and direction is not None:
-        result_fn = lambda: polish_text_refine(polished, direction, mode)
-    else:
-        _validate_text(text)
-        result_fn = lambda: polish_text(text, mode)
 
     if os.getenv("MOCK_AI", "0") == "1":
-        delay = float(os.getenv("MOCK_AI_DELAY", "0"))
-        result = result_fn()
-        chunk_size = 8
-        for i in range(0, len(result), chunk_size):
-            if delay > 0:
-                time.sleep(min(delay, 0.05))
-            yield result[i : i + chunk_size]
+        if polished is not None and direction is not None:
+            _validate_refine(polished, direction)
+            result = polish_text_refine(polished, direction, mode)
+        else:
+            _validate_text(text)
+            result = polish_text(text, mode)
+        yield from _yield_mock_stream(result)
         return
 
     try:
-        result = result_fn()
-        chunk_size = 12
-        for i in range(0, len(result), chunk_size):
-            yield result[i : i + chunk_size]
-            time.sleep(0.01)
+        if polished is not None and direction is not None:
+            _validate_refine(polished, direction)
+            user_msg = _build_refine_user_message(polished, direction)
+            stream_iter = _iter_chat_stream(user_msg, mode, refine=True)
+            error_message = (
+                "AI 返回了思考过程或任务答案，而非合并后的新提示词，请精简优化方向后重试"
+            )
+        else:
+            _validate_text(text)
+            stream_iter = _iter_chat_stream(text, mode)
+            error_message = (
+                "AI 返回了任务执行结果或思考过程，而非优化后的提示词，请精简原始描述后重试"
+            )
+
+        yield from _stream_and_validate(stream_iter, error_message=error_message)
+    except ValueError:
+        raise
     except APITimeoutError:
-        raise Exception("API_TIMEOUT")
+        raise Exception("API_TIMEOUT") from None
+    except Exception as e:
+        if "API_ERROR" in str(e) or "API_TIMEOUT" in str(e):
+            raise
+        raise Exception(f"API_ERROR: {str(e)}") from e
