@@ -1,10 +1,23 @@
-# Generated submission artifacts
-submission-package/
+# ===== 文档类材料（仅本地提交，不上传 Git）=====
+*.docx
+~$*.docx
 *.zip
+submission-package/
+submission-package.old/
+提交截图/
+实训要求/
 
-# Temp / placeholder files
+# 测试文档 Markdown
+AI 提示词优化助手*.md
+*测试计划*.md
+*测试汇报*.md
+附件3*.docx
+
+# ===== 脚本工具（仅本地使用）=====
+project/scripts/
+
+# ===== 临时 / 占位文件 =====
 template_raw.txt
 template_structure.txt
-~$*.docx
 学号_姓名_*
 成员1-成员2-成员3-*
