@@ -79,6 +79,13 @@ def mock_openai(monkeypatch):
     monkeypatch.setattr(ai_client, "polish_text", fake_polish)
     monkeypatch.setattr(ai_client, "polish_text_refine", fake_polish_refine)
     monkeypatch.setattr(ai_client, "polish_text_stream", fake_polish_stream)
+
+    def fake_analyze_images(images):
+        return "【图片1】模拟界面截图：含登录表单与优化对话区域。"
+
+    from backend.services import image_analyzer
+
+    monkeypatch.setattr(image_analyzer, "analyze_images", fake_analyze_images)
     return fake_polish
 
 

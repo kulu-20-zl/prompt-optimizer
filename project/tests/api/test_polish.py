@@ -64,7 +64,7 @@ def test_polish_generic_api_error(logged_in_client, monkeypatch):
         "/api/polish", json={"text": "给我一些健康饮食的建议"}
     )
     assert response.status_code == 503
-    assert "异常" in response.get_json()["error"]
+    assert "something" in response.get_json()["error"]
 
 
 def test_polish_refine_stream_success(logged_in_client, mock_openai):

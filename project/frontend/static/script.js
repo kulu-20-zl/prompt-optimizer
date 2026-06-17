@@ -20,6 +20,10 @@ const MODE_LABELS = {
     data: "数据分析",
 };
 
+const MAX_PENDING_IMAGES = 3;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+let pendingImages = [];
+
 function showToast(message, type = "info") {
     const container = document.getElementById("toast-container");
     if (!container) return;
@@ -722,6 +726,10 @@ async function streamPolish(text, mode, pendingBlock, signal, options = {}) {
           }
         : { text, mode };
 
+    if (!options.refine && options.images?.length) {
+        body.images = options.images;
+    }
+
     const originalForRecord = options.refine
         ? options.displayOriginal || `【继续优化】\n优化方向：${options.direction}`
         : text;
@@ -786,13 +794,89 @@ async function streamPolish(text, mode, pendingBlock, signal, options = {}) {
 const originalText = document.getElementById("original-text");
 const polishBtn = document.getElementById("polish-btn");
 const cancelBtn = document.getElementById("cancel-polish-btn");
+const imageFileInput = document.getElementById("image-file-input");
+const imagePreviewStrip = document.getElementById("image-preview-strip");
+
+function renderImagePreview() {
+    if (!imagePreviewStrip) return;
+    if (!pendingImages.length) {
+        imagePreviewStrip.innerHTML = "";
+        imagePreviewStrip.classList.add("hidden");
+        return;
+    }
+    imagePreviewStrip.classList.remove("hidden");
+    imagePreviewStrip.innerHTML = pendingImages
+        .map(
+            (img, idx) => `
+        <div class="image-preview-item" title="${escapeHtml(img.name)}">
+            <img src="${img.dataUrl}" alt="${escapeHtml(img.name)}">
+            <button type="button" class="image-preview-remove" data-remove-image="${idx}" aria-label="移除图片">×</button>
+        </div>`
+        )
+        .join("");
+}
+
+function clearPendingImages() {
+    pendingImages = [];
+    if (imageFileInput) imageFileInput.value = "";
+    renderImagePreview();
+}
+
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("读取图片失败"));
+        reader.readAsDataURL(file);
+    });
+}
+
+async function addImageFiles(fileList) {
+    if (!fileList?.length) return;
+    const slots = MAX_PENDING_IMAGES - pendingImages.length;
+    if (slots <= 0) {
+        showToast(`最多添加 ${MAX_PENDING_IMAGES} 张参考图`, "error");
+        return;
+    }
+    const files = Array.from(fileList).slice(0, slots);
+    for (const file of files) {
+        if (!file.type.startsWith("image/")) {
+            showToast("仅支持图片文件", "error");
+            continue;
+        }
+        if (file.size > MAX_IMAGE_BYTES) {
+            showToast(`${file.name} 超过 4MB`, "error");
+            continue;
+        }
+        try {
+            const dataUrl = await readFileAsDataUrl(file);
+            pendingImages.push({
+                name: file.name,
+                mime: file.type,
+                dataUrl,
+            });
+        } catch (err) {
+            showToast(err.message || "读取图片失败", "error");
+        }
+    }
+    renderImagePreview();
+}
+
+function buildImagePayload() {
+    return pendingImages.map((img) => ({
+        name: img.name,
+        mime: img.mime,
+        data: img.dataUrl,
+    }));
+}
 
 async function sendPolish() {
     const text = originalText.value.trim();
     const mode = document.getElementById("optimize-mode")?.value || "general";
+    const hasImages = pendingImages.length > 0;
 
-    if (!text) {
-        showToast("请输入原始提示词", "error");
+    if (!text && !hasImages) {
+        showToast("请输入原始提示词或添加参考图片", "error");
         return;
     }
 
@@ -800,21 +884,41 @@ async function sendPolish() {
     const lastPolish = continueFromLast ? getLastChatPolish() : null;
     const useRefine = Boolean(lastPolish?.polished);
 
+    if (hasImages && useRefine) {
+        showToast("附带图片时不支持延续上一轮，请取消勾选或移除图片", "error");
+        return;
+    }
+
     polishBtn.disabled = true;
     cancelBtn?.classList.remove("hidden");
     polishAbortController = new AbortController();
 
+    const imagesForRequest = buildImagePayload();
+    const imageCount = imagesForRequest.length;
+
     originalText.value = "";
     originalText.style.height = "auto";
     document.getElementById("char-count").textContent = "0";
+    clearPendingImages();
 
-    const displayOriginal = useRefine ? `【追问】\n${text}` : text;
+    const displayOriginal = useRefine
+        ? `【追问】\n${text}`
+        : imageCount
+          ? `【含参考图 ×${imageCount}】\n${text || "（请根据图片优化提示词）"}`
+          : text;
     const activeMode = useRefine ? lastPolish.mode : mode;
     const pendingBlock = appendPendingExchange(
         displayOriginal,
         activeMode,
         useRefine ? "追问" : "原始提示词"
     );
+
+    const chatLoading = document.getElementById("chat-loading");
+    if (chatLoading && imageCount) {
+        chatLoading.querySelector(".typing-dots").textContent =
+            "正在分析参考图片并优化提示词";
+        chatLoading.classList.remove("hidden");
+    }
 
     try {
         if (useRefine) {
@@ -825,7 +929,9 @@ async function sendPolish() {
                 displayOriginal,
             });
         } else {
-            await streamPolish(text, mode, pendingBlock, polishAbortController.signal);
+            await streamPolish(text, mode, pendingBlock, polishAbortController.signal, {
+                images: imagesForRequest,
+            });
         }
         scrollChatToBottom();
     } catch (err) {
@@ -841,8 +947,30 @@ async function sendPolish() {
         polishBtn.disabled = false;
         cancelBtn?.classList.add("hidden");
         polishAbortController = null;
+        if (chatLoading) {
+            chatLoading.querySelector(".typing-dots").textContent = "AI 正在优化提示词";
+            chatLoading.classList.add("hidden");
+        }
     }
 }
+
+document.getElementById("attach-image-btn")?.addEventListener("click", () => {
+    imageFileInput?.click();
+});
+
+imageFileInput?.addEventListener("change", async (e) => {
+    await addImageFiles(e.target.files);
+    e.target.value = "";
+});
+
+imagePreviewStrip?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-remove-image]");
+    if (!btn) return;
+    const idx = Number(btn.dataset.removeImage);
+    if (Number.isNaN(idx)) return;
+    pendingImages.splice(idx, 1);
+    renderImagePreview();
+});
 
 document.getElementById("load-more-btn")?.addEventListener("click", () => {
     if (chatHasMore) loadChatHistory(chatHistoryPage + 1, true);

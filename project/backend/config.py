@@ -35,6 +35,16 @@ class Config:
     MAX_TEXT_LENGTH = 2000
     REFINE_POLISHED_MAX = 3500
     REFINE_DIRECTION_MAX = 800
+    MAX_IMAGES = int(os.getenv("MAX_IMAGES", "3"))
+    MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(4 * 1024 * 1024)))
+    VISION_ENABLED = os.getenv("VISION_ENABLED", "1") == "1"
+    VISION_MODEL = os.getenv("VISION_MODEL", "gpt-5.4")
+    VISION_API_KEY = os.getenv("VISION_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
+    VISION_BASE_URL = (
+        os.getenv("VISION_BASE_URL", "")
+        or os.getenv("OPENAI_BASE_URL", "")
+        or "https://api.openai.com/v1"
+    )
     MAX_PER_PAGE = 50
     DEFAULT_PER_PAGE = 10
     DEBUG = os.getenv("FLASK_DEBUG", "1") == "1"

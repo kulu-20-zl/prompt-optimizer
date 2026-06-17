@@ -1,7 +1,10 @@
 # ===== 文档类材料（仅本地提交，不上传 Git）=====
 *.docx
+*.pptx
 ~$*.docx
+~$*.pptx
 *.zip
+备份/
 submission-package/
 submission-package.old/
 提交截图/

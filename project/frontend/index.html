@@ -186,15 +186,29 @@
                             </select>
                         </div>
                         <div class="chat-input-wrap">
+                            <div id="image-preview-strip" class="image-preview-strip hidden" aria-live="polite"></div>
                             <textarea
                                 id="original-text"
                                 rows="1"
                                 maxlength="2000"
-                                placeholder="输入原始提示词，支持 Markdown（**加粗**、列表等）"
+                                placeholder="输入原始提示词，或添加参考图让 AI 理解后优化（支持 Markdown）"
                             ></textarea>
                             <span class="char-count"><span id="char-count">0</span>/2000</span>
                         </div>
                         <div class="chat-action-col">
+                            <input
+                                type="file"
+                                id="image-file-input"
+                                class="hidden"
+                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                multiple
+                            >
+                            <button
+                                id="attach-image-btn"
+                                type="button"
+                                class="chat-tool-btn chat-image-btn"
+                                title="添加参考图片（最多3张）"
+                            >图片</button>
                             <button id="cancel-polish-btn" type="button" class="chat-tool-btn chat-cancel-btn hidden" title="取消优化">取消</button>
                             <button id="polish-btn" type="button" class="chat-send-btn" title="优化提示词">优化</button>
                         </div>
